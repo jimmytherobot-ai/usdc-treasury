@@ -1,1 +1,55 @@
-[]
+[
+  {
+    "tx_hash": "63fc97e987ba3d61523bfd8c93fbe58aa3614eef7e16be682ed362f5d79e2a4c",
+    "chain": "base_sepolia",
+    "chain_name": "Base Sepolia",
+    "from": "0x8fcc48751905c01cB7ddCC7A0c3d491389805ba8",
+    "to": "0x000000000000000000000000000000000000dEaD",
+    "amount_usdc": "1.00",
+    "amount_raw": 1000000,
+    "type": "transfer",
+    "category": "services",
+    "memo": "Test transfer for USDC Treasury skill",
+    "status": "confirmed",
+    "block_number": 37217396,
+    "gas_used": 44843,
+    "timestamp": "2026-02-04T11:04:40.107028+00:00",
+    "explorer_url": "https://base-sepolia.blockscout.com/tx/0x63fc97e987ba3d61523bfd8c93fbe58aa3614eef7e16be682ed362f5d79e2a4c"
+  },
+  {
+    "tx_hash": "f1634880b8b50724342c5f526ccd64118f67bef2761fd3525986e13525e34e0a",
+    "chain": "base_sepolia",
+    "chain_name": "Base Sepolia",
+    "from": "0x8fcc48751905c01cB7ddCC7A0c3d491389805ba8",
+    "to": "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18",
+    "amount_usdc": "5.0",
+    "amount_raw": 5000000,
+    "type": "invoice_payment",
+    "invoice_number": "INV-0001",
+    "category": "services",
+    "memo": "Payment for INV-0001",
+    "status": "confirmed",
+    "block_number": 37217402,
+    "gas_used": 62159,
+    "timestamp": "2026-02-04T11:04:52.286026+00:00",
+    "explorer_url": "https://base-sepolia.blockscout.com/tx/0xf1634880b8b50724342c5f526ccd64118f67bef2761fd3525986e13525e34e0a"
+  },
+  {
+    "tx_hash": "2d048b7b3b5d1e9fa84c580679730b03a83c28026ae8511358223bd561dc1487",
+    "chain": "base_sepolia",
+    "chain_name": "Base Sepolia",
+    "from": "0x8fcc48751905c01cB7ddCC7A0c3d491389805ba8",
+    "to": "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18",
+    "amount_usdc": "4.0",
+    "amount_raw": 4000000,
+    "type": "invoice_payment",
+    "invoice_number": "INV-0001",
+    "category": "services",
+    "memo": "Payment for INV-0001",
+    "status": "confirmed",
+    "block_number": 37217405,
+    "gas_used": 45047,
+    "timestamp": "2026-02-04T11:04:58.616235+00:00",
+    "explorer_url": "https://base-sepolia.blockscout.com/tx/0x2d048b7b3b5d1e9fa84c580679730b03a83c28026ae8511358223bd561dc1487"
+  }
+]

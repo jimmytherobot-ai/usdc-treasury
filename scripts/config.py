@@ -54,18 +54,32 @@ CCTP_ATTESTATION_API = "https://iris-api-sandbox.circle.com/v2/attestations"
 TREASURY_WALLET = "0x8fcc48751905c01cB7ddCC7A0c3d491389805ba8"
 
 def get_private_key():
-    """Retrieve private key from KeePassXC"""
+    """Retrieve private key from KeePassXC or macOS Keychain"""
+    # Try KeePassXC first
     try:
         result = subprocess.run(
             [os.path.expanduser("~/clawd/scripts/get-secret.sh"), "jimmy-wallet-eth"],
             capture_output=True, text=True, timeout=10
         )
         key = result.stdout.strip()
+        if key and len(key) >= 64 and not key.startswith("Error"):
+            return key if key.startswith("0x") else f"0x{key}"
+    except Exception:
+        pass
+    
+    # Fallback to macOS Keychain
+    try:
+        result = subprocess.run(
+            ["security", "find-generic-password", "-a", "jimmy", "-s", "jimmy-wallet-eth", "-w"],
+            capture_output=True, text=True, timeout=10
+        )
+        key = result.stdout.strip()
         if key and len(key) >= 64:
             return key if key.startswith("0x") else f"0x{key}"
-        raise ValueError("Invalid key format")
-    except Exception as e:
-        raise RuntimeError(f"Failed to get private key: {e}")
+    except Exception:
+        pass
+    
+    raise RuntimeError("Failed to get private key from KeePassXC or macOS Keychain")
 
 
 # ============================================================

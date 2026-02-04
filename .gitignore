@@ -1,0 +1,12 @@
+# Runtime data - NOT ignored because test tx data serves as proof
+# data/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Environment
+.env
+__pycache__/
