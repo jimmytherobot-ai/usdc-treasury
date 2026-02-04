@@ -76,8 +76,9 @@ CHAINS = {
     },
 }
 
-# Circle CCTP attestation API (testnet)
-CCTP_ATTESTATION_API = "https://iris-api-sandbox.circle.com/v2/attestations"
+# Circle CCTP API (testnet)
+CCTP_ATTESTATION_API = "https://iris-api-sandbox.circle.com/v2/attestations"  # V1-style (legacy)
+CCTP_API_BASE = "https://iris-api-sandbox.circle.com"  # V2 API base
 
 # Safety: reject mainnet chain IDs to prevent accidental mainnet transactions
 MAINNET_CHAIN_IDS = {1, 8453, 42161, 10, 137, 43114, 56}  # ETH, Base, Arb, OP, Polygon, Avalanche, BSC
@@ -215,7 +216,7 @@ TOKEN_MESSENGER_V2_ABI = json.loads("""[
     }
 ]""")
 
-# CCTP MessageTransmitterV2 ABI (receiveMessage)
+# CCTP MessageTransmitterV2 ABI (receiveMessage + usedNonces)
 MESSAGE_TRANSMITTER_V2_ABI = json.loads("""[
     {
         "inputs": [
@@ -227,6 +228,17 @@ MESSAGE_TRANSMITTER_V2_ABI = json.loads("""[
             {"name": "success", "type": "bool"}
         ],
         "stateMutability": "nonpayable",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {"name": "nonce", "type": "bytes32"}
+        ],
+        "name": "usedNonces",
+        "outputs": [
+            {"name": "", "type": "uint256"}
+        ],
+        "stateMutability": "view",
         "type": "function"
     }
 ]""")

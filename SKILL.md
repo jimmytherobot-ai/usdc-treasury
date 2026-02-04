@@ -1,6 +1,6 @@
 ---
 name: usdc-treasury
-version: 2.1.0
+version: 2.2.0
 description: "USDC Treasury & Invoice Management — QuickBooks for AI agents, settled in USDC on-chain. Multi-chain testnet treasury tracking, invoicing with on-chain payment settlement, CCTP bridging, reconciliation, FASB ASU 2023-08 compliant reporting, and inter-agent REST API."
 author: jimmytherobot-ai
 homepage: https://github.com/jimmytherobot-ai/usdc-treasury
@@ -206,18 +206,40 @@ python scripts/invoices.py cancel INV-0001
 ### Cross-Chain Bridge (CCTP v2)
 
 ```bash
-# Bridge USDC between chains
+# Bridge USDC between chains (standard ~15 min, no fee)
 python scripts/cctp.py bridge ethereum_sepolia base_sepolia 10.00
+
+# Fast transfer (~8-20 seconds, small fee)
+python scripts/cctp.py bridge ethereum_sepolia base_sepolia 10.00 --fast
+
+# Custom max fee (in USDC raw units, 6 decimals)
+python scripts/cctp.py bridge ethereum_sepolia base_sepolia 10.00 --fast --max-fee 50000
 
 # Check bridge status
 python scripts/cctp.py status BURN_TX_HASH
 
-# Resume a pending bridge
+# Resume a pending bridge (fetches attestation + mints)
 python scripts/cctp.py complete BURN_TX_HASH
+
+# Retry a failed mint (uses stored attestation, no re-polling)
+python scripts/cctp.py retry BURN_TX_HASH
 
 # List pending bridges
 python scripts/cctp.py pending
+
+# Query current bridge fees
+python scripts/cctp.py fees ethereum_sepolia base_sepolia
 ```
+
+**Bridge improvements (v2.2):**
+- **V2 attestation API** — polls by tx hash, no manual log parsing needed
+- **Exponential backoff** — starts at 2s, backs off to 60s with jitter (rate-limit friendly)
+- **Fast transfers** — `--fast` flag for ~8-20 second finality with auto fee calculation
+- **Retry failed mints** — `retry` command reuses stored attestation without re-polling
+- **Idempotency** — checks if nonce is already used before sending receiveMessage
+- **EIP-1559 gas** — uses maxFeePerGas/maxPriorityFeePerGas where supported
+- **Infinite approval** — approves max_uint256 once, saves gas on subsequent bridges
+- **Gas estimation** — uses eth_estimateGas with buffer instead of hardcoded 300k
 
 ### Reconciliation
 
@@ -415,7 +437,12 @@ Agent A (Vendor)              Agent B (Payer)
 ### CCTP Cross-Chain Bridging
 - **Circle CCTP v2** for native USDC bridging between testnets
 - **4-step flow:** approve → burn → attest → mint
-- **Automatic attestation polling** from Circle's API
+- **V2 attestation API** — polls by tx hash, no manual log extraction needed
+- **Fast transfer support** — `--fast` flag for seconds-level finality with fees
+- **Exponential backoff with jitter** — rate-limit friendly attestation polling
+- **Retry/resume** — stored attestations survive restarts, `retry` for failed mints
+- **Idempotency** — nonce check before receiveMessage prevents duplicate mints
+- **Gas optimization** — EIP-1559 fees, infinite approval, dynamic gas estimation
 - **Transaction recording** for both burn and mint legs
 
 ### Reconciliation Engine
