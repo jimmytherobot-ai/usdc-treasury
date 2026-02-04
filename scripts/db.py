@@ -16,7 +16,8 @@ from contextlib import contextmanager
 # Database Path
 # ============================================================
 
-DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+DATA_DIR = os.environ.get("TREASURY_DATA_DIR",
+                         os.path.join(os.path.dirname(os.path.dirname(__file__)), "data"))
 DB_PATH = os.path.join(DATA_DIR, "treasury.db")
 
 # Legacy JSON paths (for migration)
