@@ -1,5 +1,29 @@
 # Changelog
 
+## v2.1.0 — 2026-02-04
+
+### 🌐 Inter-Agent REST API
+- **`scripts/server.py`** — lightweight HTTP server for agent-to-agent treasury operations
+  - `GET /health` — health check
+  - `GET /balance` — treasury balances across all chains
+  - `GET /invoices` — list invoices with filters (status, type, counterparty)
+  - `GET /invoices/<num>` — get invoice details
+  - `GET /invoices/<num>/audit` — full audit trail
+  - `POST /invoices` — receive an invoice from another agent
+  - `POST /invoices/<num>/pay` — trigger on-chain payment
+- Bearer token authentication via `TREASURY_API_KEY` env var
+- CORS support for cross-origin requests
+
+### 📦 Python Package Imports
+- Proper `__init__.py` with all public API exports
+- Importable as `from skills.usdc_treasury.scripts import get_balances, create_invoice, ...`
+- Symlink `usdc_treasury` → `usdc-treasury` for Python-friendly imports
+
+### 🔑 Environment Variable Configuration
+- `TREASURY_PRIVATE_KEY` / `ETH_PRIVATE_KEY` env vars as first-priority key source
+- Enables Docker/Linux/CI deployment without KeePassXC or macOS Keychain
+- Key resolution order: env vars → KeePassXC → macOS Keychain
+
 ## v2.0.0 — 2026-02-04
 
 ### 🗄️ SQLite Migration (Breaking: data format change)

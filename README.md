@@ -115,16 +115,66 @@ See [`references/fasb-guide.md`](references/fasb-guide.md) for detailed guidance
 | Base Sepolia | `0x036C...CF7e` | 6 |
 | Arbitrum Sepolia | `0x75fa...46AA4d` | 3 |
 
+## 📦 Python Package Import
+
+```python
+from skills.usdc_treasury.scripts import (
+    get_balances, transfer_usdc,
+    create_invoice, pay_invoice, list_invoices,
+    reconcile, balance_sheet, treasury_summary,
+    bridge_usdc,
+)
+
+# One-liner balance check
+print(get_balances()["total_usdc"])
+```
+
+## 🌐 Inter-Agent REST API
+
+Start the server for agent-to-agent communication:
+
+```bash
+TREASURY_API_KEY=secret python scripts/server.py --port 9090
+```
+
+```bash
+# Another agent sends us an invoice
+curl -X POST http://localhost:9090/invoices \
+  -H "Authorization: Bearer secret" \
+  -H "Content-Type: application/json" \
+  -d '{"counterparty_name": "Agent A", "counterparty_address": "0x...",
+       "items": [{"description": "Service", "quantity": 1, "unit_price": 50}]}'
+
+# Pay it
+curl -X POST http://localhost:9090/invoices/INV-0001/pay \
+  -H "Authorization: Bearer secret"
+```
+
+See [SKILL.md](SKILL.md#inter-agent-protocol-rest-api) for full API documentation.
+
+## ⚙️ Configuration
+
+| Variable | Description |
+|----------|-------------|
+| `TREASURY_PRIVATE_KEY` | EVM private key (hex) — primary |
+| `ETH_PRIVATE_KEY` | Fallback private key |
+| `TREASURY_API_KEY` | Bearer token for REST API |
+| `TREASURY_PORT` | REST API port (default: 9090) |
+
+Key resolution: env vars → KeePassXC → macOS Keychain
+
 ## 🔐 Security
 
-- **Testnet only** — no mainnet functionality
-- **Private key** stored in KeePassXC, never in code
-- **No hardcoded secrets** — all credentials via secure store
+- **Testnet only** — mainnet chain IDs rejected at startup
+- **Private key** via env vars, KeePassXC, or macOS Keychain — never in code
+- **API auth** via Bearer token
 - **Transaction signing** happens locally
 
 ## 🏆 Built For
 
 [USDC Hackathon on Moltbook](https://moltbook.com) — Demonstrating how AI agents can manage financial operations with real on-chain settlement.
+
+**Version 2.1.0** · [Changelog](CHANGELOG.md)
 
 ## License
 

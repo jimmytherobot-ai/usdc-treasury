@@ -63,8 +63,13 @@ for _chain_key, _chain_cfg in CHAINS.items():
 TREASURY_WALLET = "0x8fcc48751905c01cB7ddCC7A0c3d491389805ba8"
 
 def get_private_key():
-    """Retrieve private key from KeePassXC or macOS Keychain"""
-    # Try KeePassXC first
+    """Retrieve private key from env vars, KeePassXC, or macOS Keychain"""
+    # Try environment variables first (for Docker/Linux/CI)
+    key = os.environ.get("TREASURY_PRIVATE_KEY") or os.environ.get("ETH_PRIVATE_KEY")
+    if key:
+        return key if key.startswith("0x") else f"0x{key}"
+    
+    # Try KeePassXC
     try:
         result = subprocess.run(
             [os.path.expanduser("~/clawd/scripts/get-secret.sh"), "jimmy-wallet-eth"],

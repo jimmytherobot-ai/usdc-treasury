@@ -1,7 +1,7 @@
 ---
 name: usdc-treasury
-version: 2.0.0
-description: "USDC Treasury & Invoice Management — QuickBooks for AI agents, settled in USDC on-chain. Multi-chain testnet treasury tracking, invoicing with on-chain payment settlement, CCTP bridging, reconciliation, and FASB ASU 2023-08 compliant reporting."
+version: 2.1.0
+description: "USDC Treasury & Invoice Management — QuickBooks for AI agents, settled in USDC on-chain. Multi-chain testnet treasury tracking, invoicing with on-chain payment settlement, CCTP bridging, reconciliation, FASB ASU 2023-08 compliant reporting, and inter-agent REST API."
 author: jimmytherobot-ai
 homepage: https://github.com/jimmytherobot-ai/usdc-treasury
 tags: [usdc, treasury, invoicing, accounting, cctp, stablecoin, defi]
@@ -241,6 +241,133 @@ All data persists in `data/treasury.db` (SQLite database):
 - `counters` — Monotonic counters (invoice numbering)
 - `high_water_marks` — Reconciliation scan progress per chain
 - `cctp_bridges` — Pending CCTP bridge state for resume
+
+## Environment Variables
+
+The skill can be configured entirely via environment variables (useful for Docker/Linux/CI):
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `TREASURY_PRIVATE_KEY` | EVM private key (hex, with or without 0x prefix) | One of these |
+| `ETH_PRIVATE_KEY` | Fallback for private key | One of these |
+| `TREASURY_API_KEY` | Bearer token for the REST API server | For production |
+| `TREASURY_PORT` | Port for REST API server (default: 9090) | No |
+
+**Key resolution order:** `TREASURY_PRIVATE_KEY` → `ETH_PRIVATE_KEY` → KeePassXC → macOS Keychain
+
+## Python Package Usage
+
+The skill is importable as a Python package:
+
+```python
+from skills.usdc_treasury.scripts import (
+    get_balances, transfer_usdc,
+    create_invoice, pay_invoice, list_invoices, get_invoice_audit_trail,
+    reconcile,
+    balance_sheet, income_statement, treasury_summary,
+    bridge_usdc,
+)
+
+# Check balances across all chains
+balances = get_balances()
+print(f"Total USDC: {balances['total_usdc']}")
+
+# Create and pay an invoice
+inv = create_invoice(
+    counterparty_name="Agent B",
+    counterparty_address="0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18",
+    line_items=[{"description": "API calls", "quantity": 1000, "unit_price": 0.01}],
+    chain_key="base_sepolia",
+)
+result = pay_invoice(inv["invoice_number"])
+print(f"Paid: {result['payment']['explorer_url']}")
+
+# Generate FASB-compliant balance sheet
+sheet = balance_sheet()
+```
+
+## Inter-Agent Protocol (REST API)
+
+The treasury exposes a REST API that enables agent-to-agent USDC invoicing and settlement. Any agent can send invoices, check payment status, and trigger payments programmatically.
+
+### Start the Server
+
+```bash
+TREASURY_API_KEY=your-secret-key python scripts/server.py --port 9090
+```
+
+### Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/health` | Health check |
+| `GET` | `/balance` | Treasury balances (all chains) |
+| `GET` | `/balance?chain=base_sepolia` | Balance on specific chain |
+| `GET` | `/invoices` | List invoices (filterable) |
+| `GET` | `/invoices?status=pending&type=payable` | Filter by status/type |
+| `GET` | `/invoices/INV-0001` | Get invoice details |
+| `GET` | `/invoices/INV-0001/audit` | Full audit trail |
+| `POST` | `/invoices` | Create/receive an invoice |
+| `POST` | `/invoices/INV-0001/pay` | Pay an invoice on-chain |
+
+### Authentication
+
+All requests require a Bearer token (if `TREASURY_API_KEY` is set):
+```
+Authorization: Bearer your-secret-key
+```
+
+### Example: Agent A Invoices Agent B
+
+**Agent A** (the vendor) sends an invoice to **Agent B** (the payer):
+
+```bash
+# Agent A → Agent B's treasury API
+curl -X POST http://agent-b:9090/invoices \
+  -H "Authorization: Bearer agent-b-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "counterparty_name": "Agent A",
+    "counterparty_address": "0xAgentA...",
+    "items": [{"description": "Data processing", "quantity": 500, "unit_price": 0.10}],
+    "chain": "base_sepolia",
+    "due_days": 7,
+    "memo": "January data processing"
+  }'
+```
+
+**Agent B** reviews and pays:
+
+```bash
+# Agent B pays the invoice
+curl -X POST http://agent-b:9090/invoices/INV-0005/pay \
+  -H "Authorization: Bearer agent-b-api-key"
+```
+
+**Agent A** confirms receipt by checking its own incoming transfers:
+
+```bash
+python scripts/treasury.py watch --chain base_sepolia
+```
+
+### Flow Diagram
+
+```
+Agent A (Vendor)              Agent B (Payer)
+     │                              │
+     │── POST /invoices ──────────→ │  (A sends invoice to B)
+     │                              │  Invoice created: INV-0005
+     │                              │
+     │                              │── POST /invoices/INV-0005/pay
+     │                              │  (B pays on-chain)
+     │                              │  USDC tx confirmed ✓
+     │                              │
+     │← on-chain USDC ────────────│  
+     │  (A detects via watch)       │
+     │  Auto-matched to receivable  │
+     │                              │
+     │── reconcile ────────────────│  Both agents reconcile ✓
+```
 
 ## Dependencies
 

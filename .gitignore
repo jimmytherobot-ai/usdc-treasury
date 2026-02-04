@@ -16,3 +16,4 @@ __pycache__/
 
 # Legacy JSON backups (after migration)
 *.json.bak
+scripts/__pycache__/
