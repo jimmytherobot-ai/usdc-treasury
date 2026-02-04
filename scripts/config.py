@@ -5,7 +5,6 @@ Testnet contract addresses, chain configs, ABIs
 
 import os
 import json
-import fcntl
 import subprocess
 
 # ============================================================
@@ -151,41 +150,13 @@ MESSAGE_TRANSMITTER_V2_ABI = json.loads("""[
 
 
 # ============================================================
-# Data paths
+# Data paths (legacy — kept for backward compat references)
 # ============================================================
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+DB_PATH = os.path.join(DATA_DIR, "treasury.db")
+
+# Legacy JSON paths — no longer used for storage, only for migration detection
 INVOICES_FILE = os.path.join(DATA_DIR, "invoices.json")
 TRANSACTIONS_FILE = os.path.join(DATA_DIR, "transactions.json")
 BUDGETS_FILE = os.path.join(DATA_DIR, "budgets.json")
-
-def ensure_data_dir():
-    os.makedirs(DATA_DIR, exist_ok=True)
-    for f in [INVOICES_FILE, TRANSACTIONS_FILE, BUDGETS_FILE]:
-        if not os.path.exists(f):
-            with open(f, "w") as fh:
-                json.dump([], fh)
-
-def load_json(path):
-    ensure_data_dir()
-    try:
-        with open(path) as f:
-            fcntl.flock(f, fcntl.LOCK_SH)
-            try:
-                return json.load(f)
-            finally:
-                fcntl.flock(f, fcntl.LOCK_UN)
-    except (json.JSONDecodeError, FileNotFoundError):
-        return []
-
-def save_json(path, data):
-    ensure_data_dir()
-    # Use "a+" to create file if it doesn't exist, then seek+truncate for write
-    with open(path, "a+") as f:
-        fcntl.flock(f, fcntl.LOCK_EX)
-        try:
-            f.seek(0)
-            f.truncate()
-            json.dump(data, f, indent=2, default=str)
-        finally:
-            fcntl.flock(f, fcntl.LOCK_UN)

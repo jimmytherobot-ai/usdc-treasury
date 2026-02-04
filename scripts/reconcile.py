@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 USDC Treasury - Reconciliation Engine
-Match on-chain transactions with invoices, detect discrepancies
+Match on-chain transactions with invoices, detect discrepancies.
+Uses high-water marks to avoid re-scanning blocks.
 """
 
 import sys
@@ -14,20 +15,21 @@ from decimal import Decimal
 sys.path.insert(0, os.path.dirname(__file__))
 
 from web3 import Web3
-from config import (
-    CHAINS, TREASURY_WALLET, ERC20_ABI,
-    INVOICES_FILE, TRANSACTIONS_FILE,
-    load_json, save_json
-)
+from config import CHAINS, TREASURY_WALLET, ERC20_ABI
+import db
+
+# Default lookback for first run (no high-water mark)
+DEFAULT_FIRST_RUN_LOOKBACK = 10000
 
 
 # ============================================================
 # On-Chain Transaction Fetching
 # ============================================================
 
-def fetch_onchain_usdc_transfers(chain_key, wallet=None, from_block=None):
+def fetch_onchain_usdc_transfers(chain_key, wallet=None, from_block=None, update_hwm=True):
     """
     Fetch USDC Transfer events for a wallet from chain.
+    Uses high-water mark for efficient incremental scanning.
     Returns list of on-chain transfer records.
     """
     wallet = wallet or TREASURY_WALLET
@@ -40,24 +42,37 @@ def fetch_onchain_usdc_transfers(chain_key, wallet=None, from_block=None):
     )
     decimals = usdc.functions.decimals().call()
     
-    if from_block is None:
-        # Look back ~1000 blocks
-        current = w3.eth.block_number
-        from_block = max(0, current - 1000)
+    current_block = w3.eth.block_number
     
-    # Get Transfer events where wallet is sender or receiver
+    if from_block is not None:
+        # Explicit override
+        scan_from = from_block
+    else:
+        # Use high-water mark if available
+        hwm = db.get_high_water_mark(chain_key, wallet)
+        if hwm is not None:
+            scan_from = hwm + 1
+        else:
+            # First run: look back DEFAULT_FIRST_RUN_LOOKBACK blocks
+            scan_from = max(0, current_block - DEFAULT_FIRST_RUN_LOOKBACK)
+    
+    # Don't scan beyond current block
+    if scan_from > current_block:
+        return []
+    
     wallet_bytes = Web3.to_checksum_address(wallet)
-    
     transfers = []
+    max_block_seen = scan_from
     
     # Outgoing
     try:
         out_filter = usdc.events.Transfer.create_filter(
-            from_block=from_block,
+            from_block=scan_from,
             argument_filters={"from": wallet_bytes}
         )
         for event in out_filter.get_all_entries():
             block = w3.eth.get_block(event.blockNumber)
+            max_block_seen = max(max_block_seen, event.blockNumber)
             transfers.append({
                 "tx_hash": event.transactionHash.hex(),
                 "chain": chain_key,
@@ -75,11 +90,12 @@ def fetch_onchain_usdc_transfers(chain_key, wallet=None, from_block=None):
     # Incoming
     try:
         in_filter = usdc.events.Transfer.create_filter(
-            from_block=from_block,
+            from_block=scan_from,
             argument_filters={"to": wallet_bytes}
         )
         for event in in_filter.get_all_entries():
             block = w3.eth.get_block(event.blockNumber)
+            max_block_seen = max(max_block_seen, event.blockNumber)
             transfers.append({
                 "tx_hash": event.transactionHash.hex(),
                 "chain": chain_key,
@@ -94,6 +110,10 @@ def fetch_onchain_usdc_transfers(chain_key, wallet=None, from_block=None):
     except Exception as e:
         print(f"Warning: Could not fetch incoming transfers on {chain_key}: {e}", file=sys.stderr)
     
+    # Update high-water mark to current block (we've scanned up to here)
+    if update_hwm and max_block_seen >= scan_from:
+        db.set_high_water_mark(chain_key, wallet, max(max_block_seen, current_block))
+    
     return transfers
 
 
@@ -101,7 +121,7 @@ def fetch_onchain_usdc_transfers(chain_key, wallet=None, from_block=None):
 # Reconciliation
 # ============================================================
 
-def reconcile(chain_key=None):
+def reconcile(chain_key=None, wallet=None, from_block=None):
     """
     Reconcile on-chain USDC transactions with internal records.
     
@@ -113,13 +133,15 @@ def reconcile(chain_key=None):
     
     Returns reconciliation report.
     """
-    internal_txs = load_json(TRANSACTIONS_FILE)
-    invoices = load_json(INVOICES_FILE)
+    wallet = wallet or TREASURY_WALLET
+    internal_txs = db.get_all_transactions()
+    invoices = db.list_invoices()
     
     chains_to_check = [chain_key] if chain_key else list(CHAINS.keys())
     
     report = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
+        "wallet": wallet,
         "chains": {},
         "summary": {
             "matched": 0,
@@ -143,7 +165,7 @@ def reconcile(chain_key=None):
         
         # Fetch on-chain data
         try:
-            onchain_txs = fetch_onchain_usdc_transfers(ck)
+            onchain_txs = fetch_onchain_usdc_transfers(ck, wallet=wallet, from_block=from_block)
         except Exception as e:
             chain_report["error"] = f"Could not fetch on-chain data: {e}"
             report["chains"][ck] = chain_report
@@ -229,7 +251,7 @@ def reconcile(chain_key=None):
                 address=Web3.to_checksum_address(cfg["usdc_address"]),
                 abi=ERC20_ABI
             )
-            onchain_balance = usdc.functions.balanceOf(TREASURY_WALLET).call()
+            onchain_balance = usdc.functions.balanceOf(wallet).call()
             decimals = usdc.functions.decimals().call()
             chain_report["balance_check"] = {
                 "onchain_usdc": str(Decimal(onchain_balance) / Decimal(10 ** decimals)),
@@ -246,9 +268,7 @@ def reconcile(chain_key=None):
 
 def reconcile_invoice(invoice_number):
     """Reconcile a specific invoice against on-chain data"""
-    from invoices import get_invoice
-    
-    invoice = get_invoice(invoice_number=invoice_number)
+    invoice = db.get_invoice(invoice_number=invoice_number)
     if not invoice:
         raise ValueError(f"Invoice {invoice_number} not found")
     
@@ -296,6 +316,8 @@ def main():
     # Full reconciliation
     full = sub.add_parser("full", help="Full reconciliation")
     full.add_argument("--chain", choices=list(CHAINS.keys()))
+    full.add_argument("--wallet", default=TREASURY_WALLET)
+    full.add_argument("--from-block", type=int, help="Override: scan from this block")
     
     # Invoice reconciliation
     inv = sub.add_parser("invoice", help="Reconcile specific invoice")
@@ -305,11 +327,12 @@ def main():
     fetch = sub.add_parser("fetch", help="Fetch on-chain transfers")
     fetch.add_argument("chain", choices=list(CHAINS.keys()))
     fetch.add_argument("--from-block", type=int)
+    fetch.add_argument("--wallet", default=TREASURY_WALLET)
     
     args = parser.parse_args()
     
     if args.command == "full":
-        result = reconcile(args.chain)
+        result = reconcile(args.chain, args.wallet, getattr(args, 'from_block', None))
         print(json.dumps(result, indent=2))
     
     elif args.command == "invoice":
@@ -317,7 +340,10 @@ def main():
         print(json.dumps(result, indent=2))
     
     elif args.command == "fetch":
-        result = fetch_onchain_usdc_transfers(args.chain, from_block=args.from_block)
+        result = fetch_onchain_usdc_transfers(
+            args.chain, wallet=args.wallet,
+            from_block=getattr(args, 'from_block', None)
+        )
         print(json.dumps(result, indent=2))
     
     else:

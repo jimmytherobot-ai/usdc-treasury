@@ -9,4 +9,10 @@ __pycache__/
 
 # Environment
 .env
-__pycache__/
+
+# SQLite WAL/SHM files (transient)
+*.db-wal
+*.db-shm
+
+# Legacy JSON backups (after migration)
+*.json.bak

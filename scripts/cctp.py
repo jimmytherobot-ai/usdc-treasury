@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 USDC Treasury - Cross-Chain Transfer Protocol (CCTP v2)
-Bridge USDC between testnets using Circle's CCTP
+Bridge USDC between testnets using Circle's CCTP.
+Supports resume of incomplete bridges via `complete` command.
 """
 
 import sys
@@ -23,6 +24,7 @@ from config import (
     get_private_key
 )
 from treasury import record_transaction
+import db
 
 
 # ============================================================
@@ -46,15 +48,7 @@ def bridge_usdc(
     3. Wait for Circle attestation
     4. Call receiveMessage on destination chain
     
-    Args:
-        source_chain: Source chain key (e.g., 'ethereum_sepolia')
-        dest_chain: Destination chain key
-        amount_usdc: Amount to bridge (human-readable)
-        recipient: Override recipient address (default: TREASURY_WALLET)
-        max_fee: Max fee in USDC raw units (0 for no fee limit)
-        min_finality: Minimum finality threshold (2000 = finalized)
-    
-    Returns: Bridge result with tx hashes for both legs
+    Pending bridges are stored in SQLite so they survive restarts.
     """
     if source_chain == dest_chain:
         raise ValueError("Source and destination chains must be different")
@@ -152,21 +146,32 @@ def bridge_usdc(
     print(f"  Burn tx: {src_cfg['explorer']}/tx/0x{burn_tx_hash}")
     
     # Extract message hash from logs
-    # The MessageSent event contains the message bytes
     message_hash = None
     message_bytes = None
     
-    # Parse logs for MessageSent event
     msg_transmitter_addr = Web3.to_checksum_address(src_cfg["message_transmitter_v2"])
     for log in burn_receipt.logs:
         if log.address.lower() == msg_transmitter_addr.lower():
-            # MessageSent(bytes message) — topic[0] is event sig
             if len(log.topics) > 0:
                 message_bytes = log.data
                 message_hash = Web3.keccak(log.data).hex()
                 break
     
     now = datetime.now(timezone.utc)
+    
+    # Store bridge in SQLite for resume capability
+    bridge_record = {
+        "burn_tx_hash": burn_tx_hash,
+        "source_chain": source_chain,
+        "dest_chain": dest_chain,
+        "amount_usdc": str(amount_usdc),
+        "recipient": recipient,
+        "message_hash": message_hash,
+        "message_bytes": message_bytes.hex() if isinstance(message_bytes, bytes) else message_bytes,
+        "status": "burn_confirmed",
+        "created_at": now.isoformat(),
+    }
+    db.insert_bridge(bridge_record)
     
     # Record the burn transaction
     record_transaction({
@@ -186,6 +191,7 @@ def bridge_usdc(
         "timestamp": now.isoformat(),
         "explorer_url": f"{src_cfg['explorer']}/tx/0x{burn_tx_hash}",
         "cctp_message_hash": message_hash,
+        "wallet": TREASURY_WALLET,
     })
     
     result = {
@@ -205,6 +211,12 @@ def bridge_usdc(
     attestation = wait_for_attestation(message_hash)
     
     if attestation:
+        # Store attestation
+        db.update_bridge(burn_tx_hash, {
+            "attestation": attestation,
+            "status": "attestation_received",
+        })
+        
         print(f"Step 4: Receiving message on {dst_cfg['name']}...")
         try:
             mint_result = receive_message(
@@ -214,7 +226,13 @@ def bridge_usdc(
             result["mint_explorer"] = mint_result["explorer_url"]
             result["status"] = "completed"
             
-            # Update transaction record
+            # Update bridge record
+            db.update_bridge(burn_tx_hash, {
+                "mint_tx_hash": mint_result["tx_hash"],
+                "status": "completed",
+            })
+            
+            # Record mint transaction
             record_transaction({
                 "tx_hash": mint_result["tx_hash"],
                 "chain": dest_chain,
@@ -231,6 +249,7 @@ def bridge_usdc(
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "explorer_url": mint_result["explorer_url"],
                 "cctp_burn_tx": burn_tx_hash,
+                "wallet": TREASURY_WALLET,
             })
         except Exception as e:
             result["mint_error"] = str(e)
@@ -238,10 +257,103 @@ def bridge_usdc(
             print(f"  Mint failed: {e}")
     else:
         result["status"] = "awaiting_attestation"
-        result["note"] = "Attestation pending. Use 'cctp complete' to finish later."
+        result["note"] = "Attestation pending. Use 'cctp.py complete <burn_tx_hash>' to finish later."
         print("  Attestation not yet available. Bridge is in progress.")
     
     return result
+
+
+# ============================================================
+# Complete a pending bridge
+# ============================================================
+
+def complete_bridge(burn_tx_hash, max_wait=600, poll_interval=10):
+    """
+    Resume and complete a pending CCTP bridge.
+    Looks up the stored message_hash, polls for attestation, and calls receiveMessage.
+    """
+    bridge = db.get_bridge(burn_tx_hash)
+    if not bridge:
+        raise ValueError(f"Bridge with burn tx {burn_tx_hash} not found in database")
+    
+    if bridge["status"] == "completed":
+        print(f"Bridge {burn_tx_hash} is already completed.")
+        return bridge
+    
+    dest_chain = bridge["dest_chain"]
+    dst_cfg = CHAINS[dest_chain]
+    message_hash = bridge.get("message_hash")
+    message_bytes = bridge.get("message_bytes")
+    attestation = bridge.get("attestation")
+    
+    if not message_hash:
+        raise ValueError(f"No message_hash stored for bridge {burn_tx_hash}. Cannot complete.")
+    
+    # Step 1: Get attestation if we don't have it
+    if not attestation:
+        print(f"Polling for attestation (message_hash: {message_hash})...")
+        attestation = wait_for_attestation(message_hash, max_wait=max_wait, poll_interval=poll_interval)
+        
+        if not attestation:
+            db.update_bridge(burn_tx_hash, {"status": "awaiting_attestation"})
+            raise RuntimeError(
+                f"Attestation not available after {max_wait}s. "
+                f"Try again later: cctp.py complete {burn_tx_hash}"
+            )
+        
+        db.update_bridge(burn_tx_hash, {
+            "attestation": attestation,
+            "status": "attestation_received",
+        })
+        print("  Attestation received!")
+    
+    # Step 2: Call receiveMessage on destination chain
+    print(f"Calling receiveMessage on {dst_cfg['name']}...")
+    
+    # Convert message_bytes from hex string if needed
+    if isinstance(message_bytes, str):
+        msg_bytes = bytes.fromhex(message_bytes.replace("0x", ""))
+    else:
+        msg_bytes = message_bytes
+    
+    private_key = get_private_key()
+    mint_result = receive_message(dest_chain, msg_bytes, attestation, private_key)
+    
+    # Update bridge record
+    db.update_bridge(burn_tx_hash, {
+        "mint_tx_hash": mint_result["tx_hash"],
+        "status": "completed",
+    })
+    
+    # Record mint transaction
+    src_cfg = CHAINS[bridge["source_chain"]]
+    record_transaction({
+        "tx_hash": mint_result["tx_hash"],
+        "chain": dest_chain,
+        "chain_name": dst_cfg["name"],
+        "from": f"CCTP←{src_cfg['name']}",
+        "to": bridge["recipient"],
+        "amount_usdc": bridge["amount_usdc"],
+        "type": "cctp_mint",
+        "category": "bridging_fees",
+        "memo": f"CCTP mint from {src_cfg['name']} (resumed)",
+        "status": "confirmed",
+        "block_number": mint_result.get("block_number"),
+        "gas_used": mint_result.get("gas_used"),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "explorer_url": mint_result["explorer_url"],
+        "cctp_burn_tx": burn_tx_hash,
+        "wallet": TREASURY_WALLET,
+    })
+    
+    print(f"  ✅ Bridge completed! Mint tx: {mint_result['explorer_url']}")
+    
+    return {
+        **bridge,
+        "mint_tx_hash": mint_result["tx_hash"],
+        "mint_explorer": mint_result["explorer_url"],
+        "status": "completed",
+    }
 
 
 def wait_for_attestation(message_hash, max_wait=300, poll_interval=10):
@@ -326,9 +438,13 @@ def receive_message(dest_chain, message_bytes, attestation, private_key=None):
 
 def get_bridge_status(burn_tx_hash):
     """Check status of a CCTP bridge by burn tx hash"""
-    from config import load_json, TRANSACTIONS_FILE
+    # Check SQLite first
+    bridge = db.get_bridge(burn_tx_hash)
+    if bridge:
+        return bridge
     
-    txs = load_json(TRANSACTIONS_FILE)
+    # Fallback: check transaction records
+    txs = db.get_all_transactions()
     burn_tx = None
     mint_tx = None
     
@@ -343,6 +459,11 @@ def get_bridge_status(burn_tx_hash):
         "mint_tx": mint_tx,
         "status": "completed" if mint_tx else ("burn_confirmed" if burn_tx else "not_found"),
     }
+
+
+def list_pending():
+    """List all pending/incomplete bridges."""
+    return db.list_pending_bridges()
 
 
 # ============================================================
@@ -364,6 +485,15 @@ def main():
     st = sub.add_parser("status", help="Check bridge status")
     st.add_argument("burn_tx_hash")
     
+    # Complete — resume a pending bridge
+    comp = sub.add_parser("complete", help="Complete a pending bridge")
+    comp.add_argument("burn_tx_hash", help="Burn tx hash from the source chain")
+    comp.add_argument("--max-wait", type=int, default=600, help="Max wait for attestation (seconds)")
+    comp.add_argument("--poll-interval", type=int, default=10, help="Poll interval (seconds)")
+    
+    # List pending bridges
+    sub.add_parser("pending", help="List pending/incomplete bridges")
+    
     args = parser.parse_args()
     
     if args.command == "bridge":
@@ -372,7 +502,15 @@ def main():
     
     elif args.command == "status":
         result = get_bridge_status(args.burn_tx_hash)
-        print(json.dumps(result, indent=2))
+        print(json.dumps(result, indent=2, default=str))
+    
+    elif args.command == "complete":
+        result = complete_bridge(args.burn_tx_hash, args.max_wait, args.poll_interval)
+        print(json.dumps(result, indent=2, default=str))
+    
+    elif args.command == "pending":
+        result = list_pending()
+        print(json.dumps(result, indent=2, default=str))
     
     else:
         parser.print_help()

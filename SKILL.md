@@ -1,6 +1,6 @@
 ---
 name: usdc-treasury
-version: 1.0.0
+version: 2.0.0
 description: "USDC Treasury & Invoice Management — QuickBooks for AI agents, settled in USDC on-chain. Multi-chain testnet treasury tracking, invoicing with on-chain payment settlement, CCTP bridging, reconciliation, and FASB ASU 2023-08 compliant reporting."
 author: jimmytherobot-ai
 homepage: https://github.com/jimmytherobot-ai/usdc-treasury
@@ -85,6 +85,45 @@ python $SCRIPTS/cctp.py bridge ethereum_sepolia base_sepolia 10.00
 
 # Check bridge status
 python $SCRIPTS/cctp.py status BURN_TX_HASH
+
+# Resume a pending bridge (if attestation timed out)
+python $SCRIPTS/cctp.py complete BURN_TX_HASH
+
+# List pending bridges
+python $SCRIPTS/cctp.py pending
+```
+
+### Receivable Invoices
+
+```bash
+# Create invoice where someone owes US money
+python $SCRIPTS/invoices.py receive \
+  --counterparty-name "Client Corp" \
+  --counterparty-address 0xCLIENT \
+  --items '[{"description": "Consulting", "quantity": 5, "unit_price": 100}]' \
+  --chain base_sepolia
+
+# List receivable invoices
+python $SCRIPTS/invoices.py list --type receivable
+
+# Scan for incoming payments (auto-matches to receivable invoices)
+python $SCRIPTS/treasury.py watch --chain base_sepolia
+```
+
+### Wallet Management
+
+```bash
+# Add a wallet to track
+python $SCRIPTS/treasury.py wallet add 0xADDRESS --name "Cold Storage"
+
+# List wallets
+python $SCRIPTS/treasury.py wallet list
+
+# Remove wallet
+python $SCRIPTS/treasury.py wallet remove 0xADDRESS
+
+# Check balance on a specific wallet
+python $SCRIPTS/treasury.py balance --wallet 0xADDRESS
 ```
 
 ### Reconciliation
@@ -96,11 +135,14 @@ python $SCRIPTS/reconcile.py full
 # Reconcile specific chain
 python $SCRIPTS/reconcile.py full --chain ethereum_sepolia
 
+# Override scan start block
+python $SCRIPTS/reconcile.py full --from-block 37200000
+
 # Reconcile specific invoice
 python $SCRIPTS/reconcile.py invoice INV-0001
 
 # Fetch on-chain transfers
-python $SCRIPTS/reconcile.py fetch ethereum_sepolia
+python $SCRIPTS/reconcile.py fetch ethereum_sepolia --from-block 37200000
 ```
 
 ### Reports
@@ -112,6 +154,9 @@ python $SCRIPTS/reports.py balance-sheet
 # Income statement
 python $SCRIPTS/reports.py income-statement --start 2026-02-01 --end 2026-02-28
 
+# Period comparison (current vs previous)
+python $SCRIPTS/reports.py compare --start 2026-02-01 --end 2026-02-28
+
 # Counterparty report
 python $SCRIPTS/reports.py counterparty --name "Acme"
 
@@ -120,6 +165,22 @@ python $SCRIPTS/reports.py chain
 
 # Treasury summary
 python $SCRIPTS/reports.py summary
+
+# CSV output (any report)
+python $SCRIPTS/reports.py summary --format csv
+
+# Date filtering (any report)
+python $SCRIPTS/reports.py summary --start 2026-02-01 --end 2026-02-28
+```
+
+### Event Monitor
+
+```bash
+# Continuous monitoring for incoming USDC (Ctrl-C to stop)
+python $SCRIPTS/treasury.py monitor
+
+# Monitor specific chain
+python $SCRIPTS/treasury.py monitor --chain base_sepolia --interval 15
 ```
 
 ## Features
@@ -172,13 +233,18 @@ python $SCRIPTS/reports.py summary
 
 ## Data Storage
 
-All data persists in `data/` directory:
-- `invoices.json` — Invoice records with payment history
-- `transactions.json` — Full transaction ledger
-- `budgets.json` — Budget configurations
+All data persists in `data/treasury.db` (SQLite database):
+- `transactions` — Full transaction ledger with indexes
+- `invoices` — Invoice records with payment history
+- `budgets` — Budget configurations
+- `wallets` — Tracked wallet addresses
+- `counters` — Monotonic counters (invoice numbering)
+- `high_water_marks` — Reconciliation scan progress per chain
+- `cctp_bridges` — Pending CCTP bridge state for resume
 
 ## Dependencies
 
 - Python 3.11+
 - web3.py 7.x
 - requests (for CCTP attestation API)
+- sqlite3 (stdlib)

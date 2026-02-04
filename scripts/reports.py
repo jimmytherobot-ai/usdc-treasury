@@ -1,36 +1,30 @@
 #!/usr/bin/env python3
 """
 USDC Treasury - Reporting & FASB ASU 2023-08 Compliance
-Financial reports, balance sheets, and regulatory categorization
+Financial reports, balance sheets, and regulatory categorization.
+Supports date filtering, CSV output, and period comparison.
 """
 
 import sys
 import os
 import json
+import csv
+import io
 import argparse
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 from collections import defaultdict
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-from config import (
-    CHAINS, TREASURY_WALLET,
-    INVOICES_FILE, TRANSACTIONS_FILE, BUDGETS_FILE,
-    load_json
-)
+from config import CHAINS, TREASURY_WALLET
+import db
 from treasury import get_all_balances
 
 
 # ============================================================
 # FASB ASU 2023-08 Categorization
 # ============================================================
-
-# Under FASB ASU 2023-08:
-# - Digital assets are measured at fair value with changes in net income
-# - USDC as a stablecoin pegged to USD is categorized differently than volatile crypto
-# - Stablecoins may qualify as "financial instruments" under ASC 825 if fully reserved
-# - For accounting purposes, USDC held = cash equivalent at fair value
 
 FASB_CATEGORIES = {
     "digital_asset_stablecoin": {
@@ -79,25 +73,79 @@ INCOME_CATEGORIES = {
 
 
 # ============================================================
+# Output Formatting
+# ============================================================
+
+def _output(data, fmt="json"):
+    """Output data in the requested format."""
+    if fmt == "csv":
+        return _to_csv(data)
+    return json.dumps(data, indent=2)
+
+
+def _to_csv(data):
+    """Convert data to CSV string. Handles dicts, lists of dicts, nested structures."""
+    output = io.StringIO()
+    writer = csv.writer(output)
+    
+    if isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict):
+        # List of dicts - straightforward
+        headers = list(data[0].keys())
+        writer.writerow(headers)
+        for row in data:
+            writer.writerow([_flatten_value(row.get(h, "")) for h in headers])
+    elif isinstance(data, dict):
+        # Single dict - flatten to key/value rows
+        _dict_to_csv(writer, data)
+    else:
+        writer.writerow(["value"])
+        writer.writerow([str(data)])
+    
+    return output.getvalue()
+
+
+def _dict_to_csv(writer, d, prefix=""):
+    """Recursively flatten a dict to CSV rows."""
+    for key, value in d.items():
+        full_key = f"{prefix}.{key}" if prefix else key
+        if isinstance(value, dict):
+            _dict_to_csv(writer, value, full_key)
+        elif isinstance(value, list):
+            if len(value) > 0 and isinstance(value[0], dict):
+                # Write list of dicts as sub-table
+                writer.writerow([])
+                writer.writerow([full_key])
+                headers = list(value[0].keys())
+                writer.writerow(headers)
+                for item in value:
+                    writer.writerow([_flatten_value(item.get(h, "")) for h in headers])
+            else:
+                writer.writerow([full_key, _flatten_value(value)])
+        else:
+            writer.writerow([full_key, _flatten_value(value)])
+
+
+def _flatten_value(v):
+    """Flatten a value for CSV output."""
+    if isinstance(v, (dict, list)):
+        return json.dumps(v, default=str)
+    return str(v) if v is not None else ""
+
+
+# ============================================================
 # Reports
 # ============================================================
 
-def generate_balance_sheet(as_of=None):
+def generate_balance_sheet(as_of=None, wallet=None):
     """
     Generate a balance sheet with FASB ASU 2023-08 compliant categorization.
-    
-    Assets:
-    - Digital assets (USDC on each chain) at fair value
-    - Accounts receivable (outstanding invoices)
-    
-    Liabilities:
-    - Accounts payable (invoices we owe — not tracked yet, placeholder)
     """
+    wallet = wallet or TREASURY_WALLET
     as_of = as_of or datetime.now(timezone.utc).isoformat()
     
     # Get current balances
-    balances = get_all_balances()
-    invoices = load_json(INVOICES_FILE)
+    balances = get_all_balances(wallet)
+    invoices = db.list_invoices(wallet=wallet)
     
     # Assets
     digital_assets = []
@@ -109,14 +157,14 @@ def generate_balance_sheet(as_of=None):
         digital_assets.append({
             "chain": chain_bal["chain"],
             "usdc_balance": str(usdc),
-            "fair_value_usd": str(usdc),  # 1:1 peg
-            "cost_basis_usd": str(usdc),  # Stablecoin - cost = fair value
+            "fair_value_usd": str(usdc),
+            "cost_basis_usd": str(usdc),
             "unrealized_gain_loss": "0.00",
             "fasb_category": FASB_CATEGORIES["digital_asset_stablecoin"],
         })
         total_digital += usdc
     
-    # Accounts receivable (pending/partial invoices where we're owed money)
+    # Accounts receivable (pending/partial invoices)
     ar_items = []
     total_ar = Decimal("0")
     for inv in invoices:
@@ -130,12 +178,13 @@ def generate_balance_sheet(as_of=None):
                 "remaining": str(remaining),
                 "due_date": inv["due_date"],
                 "aging_category": _aging_category(inv["due_date"]),
+                "type": inv.get("invoice_type", "payable"),
             })
             total_ar += remaining
     
     balance_sheet = {
         "as_of": as_of,
-        "wallet": TREASURY_WALLET,
+        "wallet": wallet,
         "fasb_standard": "ASU 2023-08 (Accounting for and Disclosure of Crypto Assets)",
         
         "assets": {
@@ -192,29 +241,25 @@ def _aging_category(due_date_str):
             return "61-90 days past due"
         else:
             return "90+ days past due"
-    except:
+    except Exception:
         return "unknown"
 
 
-def generate_income_statement(period_start=None, period_end=None):
+def generate_income_statement(period_start=None, period_end=None, wallet=None):
     """
     Generate income statement for a period.
     Categorizes transactions by type with FASB compliance.
     """
-    txs = load_json(TRANSACTIONS_FILE)
-    
     now = datetime.now(timezone.utc)
     if not period_start:
         period_start = now.replace(day=1, hour=0, minute=0, second=0).isoformat()
     if not period_end:
         period_end = now.isoformat()
     
-    # Filter by period
-    period_txs = [
-        t for t in txs
-        if period_start <= t.get("timestamp", "") <= period_end
-        and t.get("status") == "confirmed"
-    ]
+    txs = db.get_transactions(start=period_start, end=period_end, wallet=wallet, limit=None)
+    
+    # Filter confirmed
+    period_txs = [t for t in txs if t.get("status") == "confirmed"]
     
     # Categorize
     expenses = defaultdict(lambda: Decimal("0"))
@@ -228,7 +273,7 @@ def generate_income_statement(period_start=None, period_end=None):
         if tx_type in ("transfer", "invoice_payment", "cctp_bridge"):
             expense_label = EXPENSE_CATEGORIES.get(cat, f"Other expenses - {cat}")
             expenses[expense_label] += amount
-        elif tx_type in ("incoming", "received"):
+        elif tx_type in ("incoming", "received", "incoming_payment"):
             income_label = INCOME_CATEGORIES.get(cat, f"Other income - {cat}")
             income[income_label] += amount
     
@@ -247,9 +292,9 @@ def generate_income_statement(period_start=None, period_end=None):
     }
 
 
-def generate_counterparty_report(counterparty_name=None):
+def generate_counterparty_report(counterparty_name=None, start=None, end=None, wallet=None):
     """Report by counterparty — total invoiced, paid, outstanding"""
-    invoices = load_json(INVOICES_FILE)
+    invoices = db.list_invoices(start=start, end=end, wallet=wallet)
     
     counterparties = defaultdict(lambda: {
         "total_invoiced": Decimal("0"),
@@ -266,7 +311,6 @@ def generate_counterparty_report(counterparty_name=None):
         
         counterparties[cp]["total_invoiced"] += Decimal(inv["total_usdc"])
         counterparties[cp]["total_paid"] += Decimal(inv["paid_usdc"])
-        # Only count non-cancelled invoices as outstanding
         if inv["status"] not in ("cancelled",):
             counterparties[cp]["total_outstanding"] += Decimal(inv["remaining_usdc"])
         counterparties[cp]["invoice_count"] += 1
@@ -276,6 +320,7 @@ def generate_counterparty_report(counterparty_name=None):
             "total": inv["total_usdc"],
             "paid": inv["paid_usdc"],
             "remaining": inv["remaining_usdc"],
+            "type": inv.get("invoice_type", "payable"),
         })
     
     result = {}
@@ -291,10 +336,11 @@ def generate_counterparty_report(counterparty_name=None):
     return result
 
 
-def generate_chain_report():
+def generate_chain_report(start=None, end=None, wallet=None):
     """Report broken down by chain — balances, tx counts, volume"""
-    txs = load_json(TRANSACTIONS_FILE)
-    balances = get_all_balances()
+    wallet = wallet or TREASURY_WALLET
+    txs = db.get_transactions(start=start, end=end, wallet=wallet, limit=None)
+    balances = get_all_balances(wallet)
     
     result = {}
     for chain_bal in balances.get("chains", []):
@@ -326,12 +372,13 @@ def _categorize_chain_txs(txs):
     return {k: {"count": v["count"], "volume_usdc": str(v["volume"])} for k, v in cats.items()}
 
 
-def generate_treasury_summary():
+def generate_treasury_summary(start=None, end=None, wallet=None):
     """High-level treasury summary combining all data"""
-    balances = get_all_balances()
-    invoices = load_json(INVOICES_FILE)
-    txs = load_json(TRANSACTIONS_FILE)
-    budgets = load_json(BUDGETS_FILE)
+    wallet = wallet or TREASURY_WALLET
+    balances = get_all_balances(wallet)
+    invoices = db.list_invoices(start=start, end=end, wallet=wallet)
+    txs = db.get_transactions(start=start, end=end, wallet=wallet, limit=None)
+    budgets = db.get_budgets()
     
     pending_invoices = [i for i in invoices if i["status"] in ("pending", "partial")]
     paid_invoices = [i for i in invoices if i["status"] == "paid"]
@@ -342,7 +389,7 @@ def generate_treasury_summary():
     
     return {
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "wallet": TREASURY_WALLET,
+        "wallet": wallet,
         "total_usdc_across_chains": balances.get("total_usdc", "0"),
         "chain_balances": {
             c.get("chain_key", c.get("chain", "")): c.get("usdc_balance", "0")
@@ -367,8 +414,92 @@ def generate_treasury_summary():
 
 
 # ============================================================
+# Period Comparison
+# ============================================================
+
+def _parse_period_dates(start, end):
+    """Parse start/end to datetime objects."""
+    if start:
+        s = datetime.fromisoformat(start)
+    else:
+        s = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    if end:
+        e = datetime.fromisoformat(end)
+    else:
+        e = datetime.now(timezone.utc)
+    return s, e
+
+
+def generate_period_comparison(start=None, end=None, wallet=None):
+    """
+    Compare current period vs previous period.
+    If start/end given, previous period is the same duration immediately before.
+    """
+    current_start, current_end = _parse_period_dates(start, end)
+    duration = current_end - current_start
+    prev_start = current_start - duration
+    prev_end = current_start
+    
+    current = generate_income_statement(
+        current_start.isoformat(), current_end.isoformat(), wallet
+    )
+    previous = generate_income_statement(
+        prev_start.isoformat(), prev_end.isoformat(), wallet
+    )
+    
+    # Calculate changes
+    cur_income = Decimal(current["total_income_usd"])
+    prev_income = Decimal(previous["total_income_usd"])
+    cur_expenses = Decimal(current["total_expenses_usd"])
+    prev_expenses = Decimal(previous["total_expenses_usd"])
+    cur_net = Decimal(current["net_income_usd"])
+    prev_net = Decimal(previous["net_income_usd"])
+    
+    def pct_change(cur, prev):
+        if prev == 0:
+            return "N/A" if cur == 0 else "+∞"
+        return f"{float((cur - prev) / abs(prev) * 100):+.1f}%"
+    
+    return {
+        "current_period": {
+            "start": current_start.isoformat(),
+            "end": current_end.isoformat(),
+            "income": current["total_income_usd"],
+            "expenses": current["total_expenses_usd"],
+            "net_income": current["net_income_usd"],
+        },
+        "previous_period": {
+            "start": prev_start.isoformat(),
+            "end": prev_end.isoformat(),
+            "income": previous["total_income_usd"],
+            "expenses": previous["total_expenses_usd"],
+            "net_income": previous["net_income_usd"],
+        },
+        "changes": {
+            "income_change": str(cur_income - prev_income),
+            "income_pct_change": pct_change(cur_income, prev_income),
+            "expenses_change": str(cur_expenses - prev_expenses),
+            "expenses_pct_change": pct_change(cur_expenses, prev_expenses),
+            "net_income_change": str(cur_net - prev_net),
+            "net_income_pct_change": pct_change(cur_net, prev_net),
+        },
+        "current_detail": current,
+        "previous_detail": previous,
+    }
+
+
+# ============================================================
 # CLI
 # ============================================================
+
+def _add_common_args(p):
+    """Add common arguments to a subparser."""
+    p.add_argument("--format", dest="output_format", choices=["json", "csv"],
+                    default="json", help="Output format")
+    p.add_argument("--start", help="Start date filter (ISO)")
+    p.add_argument("--end", help="End date filter (ISO)")
+    p.add_argument("--wallet", default=None)
+
 
 def main():
     parser = argparse.ArgumentParser(description="USDC Treasury Reports")
@@ -376,39 +507,78 @@ def main():
     
     # Balance sheet
     bs = sub.add_parser("balance-sheet", help="FASB-compliant balance sheet")
+    _add_common_args(bs)
     
     # Income statement
     inc = sub.add_parser("income-statement", help="Income statement")
-    inc.add_argument("--start", help="Period start (ISO date)")
-    inc.add_argument("--end", help="Period end (ISO date)")
+    _add_common_args(inc)
+    inc.add_argument("--compare-period", action="store_true", help="Show current vs previous period")
     
     # Counterparty report
     cp = sub.add_parser("counterparty", help="Counterparty report")
+    _add_common_args(cp)
     cp.add_argument("--name", help="Filter by counterparty name")
     
     # Chain report
-    sub.add_parser("chain", help="Per-chain report")
+    ch = sub.add_parser("chain", help="Per-chain report")
+    _add_common_args(ch)
     
     # Treasury summary
-    sub.add_parser("summary", help="Treasury summary")
+    sm = sub.add_parser("summary", help="Treasury summary")
+    _add_common_args(sm)
+    
+    # Period comparison
+    pc = sub.add_parser("compare", help="Period comparison")
+    _add_common_args(pc)
     
     args = parser.parse_args()
+    fmt = getattr(args, 'output_format', 'json') or "json"
     
     if args.command == "balance-sheet":
-        result = generate_balance_sheet()
+        result = generate_balance_sheet(wallet=args.wallet)
     elif args.command == "income-statement":
-        result = generate_income_statement(args.start, args.end)
+        if hasattr(args, 'compare_period') and args.compare_period:
+            result = generate_period_comparison(
+                getattr(args, 'start', None),
+                getattr(args, 'end', None),
+                getattr(args, 'wallet', None)
+            )
+        else:
+            result = generate_income_statement(
+                getattr(args, 'start', None),
+                getattr(args, 'end', None),
+                getattr(args, 'wallet', None)
+            )
     elif args.command == "counterparty":
-        result = generate_counterparty_report(args.name)
+        result = generate_counterparty_report(
+            args.name,
+            getattr(args, 'start', None),
+            getattr(args, 'end', None),
+            getattr(args, 'wallet', None)
+        )
     elif args.command == "chain":
-        result = generate_chain_report()
+        result = generate_chain_report(
+            getattr(args, 'start', None),
+            getattr(args, 'end', None),
+            getattr(args, 'wallet', None)
+        )
     elif args.command == "summary":
-        result = generate_treasury_summary()
+        result = generate_treasury_summary(
+            getattr(args, 'start', None),
+            getattr(args, 'end', None),
+            getattr(args, 'wallet', None)
+        )
+    elif args.command == "compare":
+        result = generate_period_comparison(
+            getattr(args, 'start', None),
+            getattr(args, 'end', None),
+            getattr(args, 'wallet', None)
+        )
     else:
         parser.print_help()
         return
     
-    print(json.dumps(result, indent=2))
+    print(_output(result, fmt))
 
 
 if __name__ == "__main__":
