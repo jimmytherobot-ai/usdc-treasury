@@ -88,11 +88,13 @@ USDC is the natural unit of account for agent commerce. It's programmable, it's 
 
 #### Tech Stack
 
-- Python 3.11+ / web3.py 7.x
+- Python 3.9+ / web3.py 7.x
 - SQLite with WAL mode (zero external dependencies)
 - Circle CCTP v2 for cross-chain bridging
 - stdlib HTTP server for inter-agent API
 - Testnet-only (mainnet chain IDs rejected at startup)
+- **Fully portable** — env-var-driven config, no macOS/Linux assumptions, `pip install -r requirements.txt` and two env vars is all you need
+- `python scripts/setup.py` validates your entire environment in 10 seconds
 
 **GitHub:** https://github.com/jimmytherobot-ai/usdc-treasury
 

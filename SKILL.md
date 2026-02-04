@@ -14,46 +14,166 @@ chains: [ethereum-sepolia, base-sepolia, arbitrum-sepolia]
 
 A complete treasury management and invoicing system built on USDC testnet. Track balances across chains, create and pay invoices with on-chain settlement, bridge USDC via CCTP, and generate FASB-compliant reports.
 
-## Wallet
+No macOS dependencies. No hardcoded paths. Just env vars, Python, and a wallet.
 
-- **Address:** `0x8fcc48751905c01cB7ddCC7A0c3d491389805ba8`
-- **Private key:** KeePassXC (`~/clawd/scripts/get-secret.sh jimmy-wallet-eth`)
-- **Networks:** Ethereum Sepolia, Base Sepolia, Arbitrum Sepolia
+## Getting Started
+
+You just cloned this repo. Here's everything you need.
+
+### 1. Install dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+That's `web3` and `requests`. Everything else is stdlib.
+
+### 2. Set your wallet
+
+```bash
+# Your EVM private key (testnet only!)
+export TREASURY_PRIVATE_KEY=0xYourPrivateKeyHere
+
+# Optional — wallet address (auto-derived from key if not set)
+export TREASURY_WALLET=0xYourWalletAddress
+```
+
+That's the minimum. The skill derives your wallet address from the key if `TREASURY_WALLET` isn't set.
+
+### 3. Run setup to verify everything
+
+```bash
+python scripts/setup.py
+```
+
+This checks Python version, dependencies, RPC connectivity, wallet config, and shows your balances. Fix any ❌ items it flags.
+
+### 4. Get testnet tokens
+
+- **Testnet ETH** (for gas): Use a Sepolia faucet — [Google Cloud Faucet](https://cloud.google.com/application/web3/faucet/ethereum/sepolia), [Alchemy Faucet](https://www.alchemy.com/faucets/ethereum-sepolia)
+- **Testnet USDC**: https://faucet.circle.com — select the chain you want
+
+### 5. Verify it works
+
+```bash
+# Check balances across all chains
+python scripts/treasury.py balance
+
+# Create an invoice
+python scripts/invoices.py create \
+  --counterparty-name "Test Corp" \
+  --counterparty-address 0x000000000000000000000000000000000000dEaD \
+  --items '[{"description": "Test service", "quantity": 1, "unit_price": 1.00}]' \
+  --chain base_sepolia
+
+# Pay it (sends real testnet USDC)
+python scripts/invoices.py pay INV-0001
+
+# Check the audit trail
+python scripts/invoices.py audit INV-0001
+```
+
+You're live. Everything below is reference.
+
+---
+
+## Environment Variables
+
+**All configuration is via env vars.** No config files to edit, no secrets in code.
+
+### Required
+
+| Variable | Description |
+|----------|-------------|
+| `TREASURY_PRIVATE_KEY` | EVM private key (hex, with or without `0x` prefix) |
+
+Or use the common alias: `ETH_PRIVATE_KEY`
+
+### Optional
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `TREASURY_WALLET` | Wallet address | Derived from private key |
+| `TREASURY_DATA_DIR` | Where to store the SQLite database | `<skill>/data/` |
+| `TREASURY_API_KEY` | Bearer token for the REST API server | None (no auth) |
+| `TREASURY_PORT` | REST API server port | `9090` |
+| `TREASURY_RPC_ETHEREUM_SEPOLIA` | Custom RPC for Ethereum Sepolia | publicnode.com |
+| `TREASURY_RPC_BASE_SEPOLIA` | Custom RPC for Base Sepolia | publicnode.com |
+| `TREASURY_RPC_ARBITRUM_SEPOLIA` | Custom RPC for Arbitrum Sepolia | publicnode.com |
+| `TREASURY_SECRET_CMD` | Shell command that prints private key to stdout | None |
+| `TREASURY_KEYCHAIN_ACCOUNT` | macOS Keychain account (macOS only) | None |
+| `TREASURY_KEYCHAIN_SERVICE` | macOS Keychain service (macOS only) | None |
+
+**Private key resolution order:**
+1. `TREASURY_PRIVATE_KEY` env var
+2. `ETH_PRIVATE_KEY` env var
+3. `TREASURY_SECRET_CMD` (runs command, reads stdout — works with any secret manager)
+4. macOS Keychain (only if on macOS and `TREASURY_KEYCHAIN_*` vars are set)
+
+### Docker Example
+
+```bash
+docker run -e TREASURY_PRIVATE_KEY=0x... \
+           -e TREASURY_WALLET=0x... \
+           -e TREASURY_DATA_DIR=/data \
+           -v treasury-data:/data \
+           your-agent-image
+```
+
+### Secret Manager Integration
+
+The `TREASURY_SECRET_CMD` env var lets you plug in any secret backend:
+
+```bash
+# 1Password CLI
+export TREASURY_SECRET_CMD="op read op://Vault/eth-key/password"
+
+# HashiCorp Vault
+export TREASURY_SECRET_CMD="vault kv get -field=key secret/treasury"
+
+# AWS Secrets Manager
+export TREASURY_SECRET_CMD="aws secretsmanager get-secret-value --secret-id treasury-key --query SecretString --output text"
+
+# Custom script
+export TREASURY_SECRET_CMD="/path/to/get-secret.sh treasury-key"
+```
+
+---
 
 ## Quick Reference
 
 ```bash
-cd ~/clawd && source .venv/bin/activate
-SCRIPTS=skills/usdc-treasury/scripts
+# All commands are run from the skill directory
+cd usdc-treasury
 ```
 
 ### Treasury
 
 ```bash
 # Check all balances
-python $SCRIPTS/treasury.py balance
+python scripts/treasury.py balance
 
 # Check specific chain
-python $SCRIPTS/treasury.py balance --chain ethereum_sepolia
+python scripts/treasury.py balance --chain ethereum_sepolia
 
 # Transfer USDC
-python $SCRIPTS/treasury.py transfer ethereum_sepolia 0xRECIPIENT 10.00 --memo "Payment" --category services
+python scripts/treasury.py transfer ethereum_sepolia 0xRECIPIENT 10.00 --memo "Payment" --category services
 
 # Transaction history
-python $SCRIPTS/treasury.py history --chain ethereum_sepolia --category services
+python scripts/treasury.py history --chain ethereum_sepolia --category services
 
 # Set budget
-python $SCRIPTS/treasury.py budget set --chain ethereum_sepolia --category services --limit 1000 --period monthly
+python scripts/treasury.py budget set --chain ethereum_sepolia --category services --limit 1000 --period monthly
 
 # Check budget status
-python $SCRIPTS/treasury.py budget status
+python scripts/treasury.py budget status
 ```
 
 ### Invoices
 
 ```bash
-# Create invoice
-python $SCRIPTS/invoices.py create \
+# Create invoice (we owe them)
+python scripts/invoices.py create \
   --counterparty-name "Acme Corp" \
   --counterparty-address 0xRECIPIENT \
   --items '[{"description": "Consulting", "quantity": 10, "unit_price": 50}]' \
@@ -61,127 +181,220 @@ python $SCRIPTS/invoices.py create \
   --due-days 30 \
   --category services
 
-# List invoices
-python $SCRIPTS/invoices.py list --status pending
+# Create receivable (they owe us)
+python scripts/invoices.py receive \
+  --counterparty-name "Client Corp" \
+  --counterparty-address 0xCLIENT \
+  --items '[{"description": "Consulting", "quantity": 5, "unit_price": 100}]' \
+  --chain base_sepolia
 
-# Pay invoice (full)
-python $SCRIPTS/invoices.py pay INV-0001
+# List / filter
+python scripts/invoices.py list --status pending
+python scripts/invoices.py list --type receivable
 
-# Pay invoice (partial)
-python $SCRIPTS/invoices.py pay INV-0001 --amount 100
+# Pay invoice (full or partial)
+python scripts/invoices.py pay INV-0001
+python scripts/invoices.py pay INV-0001 --amount 100
 
 # Audit trail
-python $SCRIPTS/invoices.py audit INV-0001
+python scripts/invoices.py audit INV-0001
 
 # Cancel invoice
-python $SCRIPTS/invoices.py cancel INV-0001
+python scripts/invoices.py cancel INV-0001
 ```
 
 ### Cross-Chain Bridge (CCTP v2)
 
 ```bash
 # Bridge USDC between chains
-python $SCRIPTS/cctp.py bridge ethereum_sepolia base_sepolia 10.00
+python scripts/cctp.py bridge ethereum_sepolia base_sepolia 10.00
 
 # Check bridge status
-python $SCRIPTS/cctp.py status BURN_TX_HASH
+python scripts/cctp.py status BURN_TX_HASH
 
-# Resume a pending bridge (if attestation timed out)
-python $SCRIPTS/cctp.py complete BURN_TX_HASH
+# Resume a pending bridge
+python scripts/cctp.py complete BURN_TX_HASH
 
 # List pending bridges
-python $SCRIPTS/cctp.py pending
-```
-
-### Receivable Invoices
-
-```bash
-# Create invoice where someone owes US money
-python $SCRIPTS/invoices.py receive \
-  --counterparty-name "Client Corp" \
-  --counterparty-address 0xCLIENT \
-  --items '[{"description": "Consulting", "quantity": 5, "unit_price": 100}]' \
-  --chain base_sepolia
-
-# List receivable invoices
-python $SCRIPTS/invoices.py list --type receivable
-
-# Scan for incoming payments (auto-matches to receivable invoices)
-python $SCRIPTS/treasury.py watch --chain base_sepolia
-```
-
-### Wallet Management
-
-```bash
-# Add a wallet to track
-python $SCRIPTS/treasury.py wallet add 0xADDRESS --name "Cold Storage"
-
-# List wallets
-python $SCRIPTS/treasury.py wallet list
-
-# Remove wallet
-python $SCRIPTS/treasury.py wallet remove 0xADDRESS
-
-# Check balance on a specific wallet
-python $SCRIPTS/treasury.py balance --wallet 0xADDRESS
+python scripts/cctp.py pending
 ```
 
 ### Reconciliation
 
 ```bash
 # Full reconciliation (all chains)
-python $SCRIPTS/reconcile.py full
+python scripts/reconcile.py full
 
 # Reconcile specific chain
-python $SCRIPTS/reconcile.py full --chain ethereum_sepolia
-
-# Override scan start block
-python $SCRIPTS/reconcile.py full --from-block 37200000
+python scripts/reconcile.py full --chain ethereum_sepolia
 
 # Reconcile specific invoice
-python $SCRIPTS/reconcile.py invoice INV-0001
-
-# Fetch on-chain transfers
-python $SCRIPTS/reconcile.py fetch ethereum_sepolia --from-block 37200000
+python scripts/reconcile.py invoice INV-0001
 ```
 
 ### Reports
 
 ```bash
 # FASB-compliant balance sheet
-python $SCRIPTS/reports.py balance-sheet
+python scripts/reports.py balance-sheet
 
 # Income statement
-python $SCRIPTS/reports.py income-statement --start 2026-02-01 --end 2026-02-28
+python scripts/reports.py income-statement --start 2026-02-01 --end 2026-02-28
 
-# Period comparison (current vs previous)
-python $SCRIPTS/reports.py compare --start 2026-02-01 --end 2026-02-28
+# Period comparison
+python scripts/reports.py compare --start 2026-02-01 --end 2026-02-28
 
 # Counterparty report
-python $SCRIPTS/reports.py counterparty --name "Acme"
+python scripts/reports.py counterparty --name "Acme"
 
 # Per-chain report
-python $SCRIPTS/reports.py chain
+python scripts/reports.py chain
 
-# Treasury summary
-python $SCRIPTS/reports.py summary
+# Treasury summary (quick overview)
+python scripts/reports.py summary
 
 # CSV output (any report)
-python $SCRIPTS/reports.py summary --format csv
+python scripts/reports.py summary --format csv
+```
 
-# Date filtering (any report)
-python $SCRIPTS/reports.py summary --start 2026-02-01 --end 2026-02-28
+### Wallet Management
+
+```bash
+python scripts/treasury.py wallet add 0xADDRESS --name "Cold Storage"
+python scripts/treasury.py wallet list
+python scripts/treasury.py wallet remove 0xADDRESS
 ```
 
 ### Event Monitor
 
 ```bash
-# Continuous monitoring for incoming USDC (Ctrl-C to stop)
-python $SCRIPTS/treasury.py monitor
+# Scan for incoming transfers (one-shot)
+python scripts/treasury.py watch --chain base_sepolia
 
-# Monitor specific chain
-python $SCRIPTS/treasury.py monitor --chain base_sepolia --interval 15
+# Continuous monitoring (Ctrl-C to stop)
+python scripts/treasury.py monitor --interval 15
 ```
+
+---
+
+## Python Package Usage
+
+The skill is importable as a Python package:
+
+```python
+from skills.usdc_treasury.scripts import (
+    get_balances, transfer_usdc,
+    create_invoice, pay_invoice, list_invoices, get_invoice_audit_trail,
+    reconcile,
+    balance_sheet, income_statement, treasury_summary,
+    bridge_usdc,
+)
+
+# Check balances across all chains
+balances = get_balances()
+print(f"Total USDC: {balances['total_usdc']}")
+
+# Create and pay an invoice
+inv = create_invoice(
+    counterparty_name="Agent B",
+    counterparty_address="0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18",
+    line_items=[{"description": "API calls", "quantity": 1000, "unit_price": 0.01}],
+    chain_key="base_sepolia",
+)
+result = pay_invoice(inv["invoice_number"])
+print(f"Paid: {result['payment']['explorer_url']}")
+
+# Generate FASB-compliant balance sheet
+sheet = balance_sheet()
+```
+
+---
+
+## Inter-Agent Protocol (REST API)
+
+The treasury exposes a REST API for agent-to-agent USDC invoicing and settlement.
+
+### Start the Server
+
+```bash
+export TREASURY_PRIVATE_KEY=0x...
+export TREASURY_API_KEY=your-secret-key
+python scripts/server.py --port 9090
+```
+
+### Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/health` | Health check |
+| `GET` | `/balance` | Treasury balances (all chains) |
+| `GET` | `/balance?chain=base_sepolia` | Balance on specific chain |
+| `GET` | `/invoices` | List invoices (filterable) |
+| `GET` | `/invoices?status=pending&type=payable` | Filter by status/type |
+| `GET` | `/invoices/INV-0001` | Get invoice details |
+| `GET` | `/invoices/INV-0001/audit` | Full audit trail |
+| `POST` | `/invoices` | Create/receive an invoice |
+| `POST` | `/invoices/INV-0001/pay` | Pay an invoice on-chain |
+
+### Authentication
+
+All requests require a Bearer token when `TREASURY_API_KEY` is set:
+```
+Authorization: Bearer your-secret-key
+```
+
+### Example: Agent A Invoices Agent B
+
+**Agent A** (vendor) sends an invoice to **Agent B** (payer):
+
+```bash
+# Agent A → Agent B's treasury API
+curl -X POST http://agent-b:9090/invoices \
+  -H "Authorization: Bearer agent-b-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "counterparty_name": "Agent A",
+    "counterparty_address": "0xAgentA...",
+    "items": [{"description": "Data processing", "quantity": 500, "unit_price": 0.10}],
+    "chain": "base_sepolia",
+    "due_days": 7,
+    "memo": "January data processing"
+  }'
+```
+
+**Agent B** reviews and pays:
+
+```bash
+curl -X POST http://agent-b:9090/invoices/INV-0005/pay \
+  -H "Authorization: Bearer agent-b-api-key"
+```
+
+**Agent A** confirms receipt:
+
+```bash
+python scripts/treasury.py watch --chain base_sepolia
+```
+
+### Flow Diagram
+
+```
+Agent A (Vendor)              Agent B (Payer)
+     │                              │
+     │── POST /invoices ──────────→ │  (A sends invoice to B)
+     │                              │  Invoice created: INV-0005
+     │                              │
+     │                              │── POST /invoices/INV-0005/pay
+     │                              │  (B pays on-chain)
+     │                              │  USDC tx confirmed ✓
+     │                              │
+     │← on-chain USDC ────────────│
+     │  (A detects via watch)       │
+     │  Auto-matched to receivable  │
+     │                              │
+     │── reconcile ────────────────│  Both agents reconcile ✓
+```
+
+---
 
 ## Features
 
@@ -219,6 +432,8 @@ python $SCRIPTS/treasury.py monitor --chain base_sepolia --interval 15
 - **Cost basis tracking** using specific identification method
 - **Required disclosures** for significant crypto holdings
 
+---
+
 ## Contract Addresses (Testnet)
 
 | Chain | USDC | CCTP Domain |
@@ -233,7 +448,7 @@ python $SCRIPTS/treasury.py monitor --chain base_sepolia --interval 15
 
 ## Data Storage
 
-All data persists in `data/treasury.db` (SQLite database):
+All data persists in SQLite (`data/treasury.db` by default, override with `TREASURY_DATA_DIR`):
 - `transactions` — Full transaction ledger with indexes
 - `invoices` — Invoice records with payment history
 - `budgets` — Budget configurations
@@ -242,136 +457,11 @@ All data persists in `data/treasury.db` (SQLite database):
 - `high_water_marks` — Reconciliation scan progress per chain
 - `cctp_bridges` — Pending CCTP bridge state for resume
 
-## Environment Variables
-
-The skill can be configured entirely via environment variables (useful for Docker/Linux/CI):
-
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `TREASURY_PRIVATE_KEY` | EVM private key (hex, with or without 0x prefix) | One of these |
-| `ETH_PRIVATE_KEY` | Fallback for private key | One of these |
-| `TREASURY_API_KEY` | Bearer token for the REST API server | For production |
-| `TREASURY_PORT` | Port for REST API server (default: 9090) | No |
-
-**Key resolution order:** `TREASURY_PRIVATE_KEY` → `ETH_PRIVATE_KEY` → KeePassXC → macOS Keychain
-
-## Python Package Usage
-
-The skill is importable as a Python package:
-
-```python
-from skills.usdc_treasury.scripts import (
-    get_balances, transfer_usdc,
-    create_invoice, pay_invoice, list_invoices, get_invoice_audit_trail,
-    reconcile,
-    balance_sheet, income_statement, treasury_summary,
-    bridge_usdc,
-)
-
-# Check balances across all chains
-balances = get_balances()
-print(f"Total USDC: {balances['total_usdc']}")
-
-# Create and pay an invoice
-inv = create_invoice(
-    counterparty_name="Agent B",
-    counterparty_address="0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18",
-    line_items=[{"description": "API calls", "quantity": 1000, "unit_price": 0.01}],
-    chain_key="base_sepolia",
-)
-result = pay_invoice(inv["invoice_number"])
-print(f"Paid: {result['payment']['explorer_url']}")
-
-# Generate FASB-compliant balance sheet
-sheet = balance_sheet()
-```
-
-## Inter-Agent Protocol (REST API)
-
-The treasury exposes a REST API that enables agent-to-agent USDC invoicing and settlement. Any agent can send invoices, check payment status, and trigger payments programmatically.
-
-### Start the Server
-
-```bash
-TREASURY_API_KEY=your-secret-key python scripts/server.py --port 9090
-```
-
-### Endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/health` | Health check |
-| `GET` | `/balance` | Treasury balances (all chains) |
-| `GET` | `/balance?chain=base_sepolia` | Balance on specific chain |
-| `GET` | `/invoices` | List invoices (filterable) |
-| `GET` | `/invoices?status=pending&type=payable` | Filter by status/type |
-| `GET` | `/invoices/INV-0001` | Get invoice details |
-| `GET` | `/invoices/INV-0001/audit` | Full audit trail |
-| `POST` | `/invoices` | Create/receive an invoice |
-| `POST` | `/invoices/INV-0001/pay` | Pay an invoice on-chain |
-
-### Authentication
-
-All requests require a Bearer token (if `TREASURY_API_KEY` is set):
-```
-Authorization: Bearer your-secret-key
-```
-
-### Example: Agent A Invoices Agent B
-
-**Agent A** (the vendor) sends an invoice to **Agent B** (the payer):
-
-```bash
-# Agent A → Agent B's treasury API
-curl -X POST http://agent-b:9090/invoices \
-  -H "Authorization: Bearer agent-b-api-key" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "counterparty_name": "Agent A",
-    "counterparty_address": "0xAgentA...",
-    "items": [{"description": "Data processing", "quantity": 500, "unit_price": 0.10}],
-    "chain": "base_sepolia",
-    "due_days": 7,
-    "memo": "January data processing"
-  }'
-```
-
-**Agent B** reviews and pays:
-
-```bash
-# Agent B pays the invoice
-curl -X POST http://agent-b:9090/invoices/INV-0005/pay \
-  -H "Authorization: Bearer agent-b-api-key"
-```
-
-**Agent A** confirms receipt by checking its own incoming transfers:
-
-```bash
-python scripts/treasury.py watch --chain base_sepolia
-```
-
-### Flow Diagram
-
-```
-Agent A (Vendor)              Agent B (Payer)
-     │                              │
-     │── POST /invoices ──────────→ │  (A sends invoice to B)
-     │                              │  Invoice created: INV-0005
-     │                              │
-     │                              │── POST /invoices/INV-0005/pay
-     │                              │  (B pays on-chain)
-     │                              │  USDC tx confirmed ✓
-     │                              │
-     │← on-chain USDC ────────────│  
-     │  (A detects via watch)       │
-     │  Auto-matched to receivable  │
-     │                              │
-     │── reconcile ────────────────│  Both agents reconcile ✓
-```
-
 ## Dependencies
 
-- Python 3.11+
+- Python 3.9+ (3.11+ recommended)
 - web3.py 7.x
-- requests (for CCTP attestation API)
+- requests
 - sqlite3 (stdlib)
+
+Install: `pip install -r requirements.txt`

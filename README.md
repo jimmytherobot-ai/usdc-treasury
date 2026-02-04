@@ -4,35 +4,57 @@
 
 An [OpenClaw](https://openclaw.org) skill that provides complete treasury management and invoicing for AI agents, with on-chain USDC settlement on testnet.
 
+## 🚀 Quick Start
+
+```bash
+# 1. Install
+pip install -r requirements.txt
+
+# 2. Configure (just two env vars)
+export TREASURY_PRIVATE_KEY=0xYourTestnetPrivateKey
+export TREASURY_WALLET=0xYourWalletAddress  # optional, derived from key
+
+# 3. Verify
+python scripts/setup.py
+
+# 4. Use
+python scripts/treasury.py balance
+```
+
+Get testnet USDC at [faucet.circle.com](https://faucet.circle.com). Get testnet ETH from any Sepolia faucet.
+
 ## 🎯 What It Does
 
-This skill turns any OpenClaw-compatible AI agent into a treasury manager that can:
+This skill turns any AI agent into a treasury manager:
 
 1. **Track USDC balances** across Ethereum Sepolia, Base Sepolia, and Arbitrum Sepolia
 2. **Create and pay invoices** with real on-chain USDC transfers
 3. **Bridge USDC** between chains using Circle's CCTP v2
 4. **Reconcile** on-chain transactions against internal records
 5. **Generate reports** compliant with FASB ASU 2023-08
+6. **Serve a REST API** for agent-to-agent invoicing and settlement
 
 ## 🏗️ Architecture
 
 ```
 ┌─────────────────────────────────────────────────┐
-│                 AI Agent (OpenClaw)               │
+│                   AI Agent                       │
 ├─────────────────────────────────────────────────┤
 │  treasury.py    │  invoices.py   │  reports.py   │
 │  Balance mgmt   │  Invoice CRUD  │  FASB reports │
 │  Transfers      │  On-chain pay  │  Balance sheet│
 │  Budgets        │  Audit trail   │  Income stmt  │
 ├─────────────────────────────────────────────────┤
-│  cctp.py        │  reconcile.py  │  config.py    │
-│  Cross-chain    │  On-chain vs   │  Addresses    │
-│  CCTP v2 bridge │  internal match│  ABIs, keys   │
+│  cctp.py        │  reconcile.py  │  server.py    │
+│  Cross-chain    │  On-chain vs   │  REST API for │
+│  CCTP v2 bridge │  internal match│  agent-to-    │
+│                 │                │  agent comms   │
+├─────────────────────────────────────────────────┤
+│  config.py (env vars) │     db.py (SQLite)      │
 ├─────────────────────────────────────────────────┤
 │         web3.py (EVM interaction layer)          │
 ├─────────────────────────────────────────────────┤
 │  Ethereum Sepolia │ Base Sepolia │ Arb Sepolia   │
-│  USDC + CCTP v2   │ USDC + CCTP  │ USDC + CCTP   │
 └─────────────────────────────────────────────────┘
 ```
 
@@ -40,80 +62,44 @@ This skill turns any OpenClaw-compatible AI agent into a treasury manager that c
 
 ```
 usdc-treasury/
-├── SKILL.md              — OpenClaw skill definition
+├── SKILL.md              — Skill definition + full docs
 ├── README.md             — This file
 ├── CHANGELOG.md          — Version history
+├── requirements.txt      — Python dependencies
 ├── scripts/
-│   ├── config.py         — Chain configs, ABIs, wallet access
-│   ├── db.py             — SQLite database layer (v2)
-│   ├── treasury.py       — Balance tracking, transfers, budgets, wallet mgmt
-│   ├── invoices.py       — Invoice CRUD, on-chain payment, receivables
-│   ├── reconcile.py      — Reconciliation engine with high-water marks
-│   ├── reports.py        — FASB-compliant reporting, CSV export
-│   └── cctp.py           — Cross-chain USDC bridging with resume
+│   ├── __init__.py       — Package exports (for import)
+│   ├── config.py         — Chain configs, ABIs, env-var-driven settings
+│   ├── db.py             — SQLite database layer
+│   ├── setup.py          — First-run validator
+│   ├── server.py         — REST API for inter-agent protocol
+│   ├── treasury.py       — Balance tracking, transfers, budgets
+│   ├── invoices.py       — Invoice CRUD, on-chain payment
+│   ├── reconcile.py      — Reconciliation engine
+│   ├── reports.py        — FASB-compliant reporting
+│   └── cctp.py           — Cross-chain USDC bridging
 ├── references/
 │   └── fasb-guide.md     — FASB ASU 2023-08 reference
 └── data/
-    └── treasury.db       — SQLite database (all data)
+    └── treasury.db       — SQLite database (auto-created)
 ```
 
-## 🚀 Quick Start
+## ⚙️ Configuration
 
-### Prerequisites
-- Python 3.11+ with web3.py
-- Testnet ETH for gas (Sepolia faucets)
-- Testnet USDC (from [faucet.circle.com](https://faucet.circle.com))
+All configuration via environment variables — no config files, no hardcoded paths.
 
-### Check Balances
-```bash
-python scripts/treasury.py balance
-```
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `TREASURY_PRIVATE_KEY` | EVM private key (hex) | **Required** |
+| `TREASURY_WALLET` | Wallet address | Derived from key |
+| `TREASURY_DATA_DIR` | Data directory path | `<skill>/data/` |
+| `TREASURY_API_KEY` | REST API Bearer token | None (no auth) |
+| `TREASURY_PORT` | REST API port | `9090` |
+| `TREASURY_RPC_ETHEREUM_SEPOLIA` | Custom RPC URL | publicnode.com |
+| `TREASURY_RPC_BASE_SEPOLIA` | Custom RPC URL | publicnode.com |
+| `TREASURY_RPC_ARBITRUM_SEPOLIA` | Custom RPC URL | publicnode.com |
+| `TREASURY_SECRET_CMD` | Shell command to retrieve key | None |
 
-### Create & Pay an Invoice
-```bash
-# Create
-python scripts/invoices.py create \
-  --counterparty-name "Acme Corp" \
-  --counterparty-address 0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18 \
-  --items '[{"description": "API Integration", "quantity": 1, "unit_price": 100}]'
-
-# Pay
-python scripts/invoices.py pay INV-0001
-
-# Verify
-python scripts/invoices.py audit INV-0001
-```
-
-### Bridge USDC Cross-Chain
-```bash
-python scripts/cctp.py bridge ethereum_sepolia base_sepolia 5.00
-```
-
-### Generate Reports
-```bash
-python scripts/reports.py balance-sheet
-python scripts/reports.py summary
-```
-
-## 📊 FASB ASU 2023-08 Compliance
-
-This system implements accounting treatment per the new FASB standard for crypto assets:
-
-- **Fair value measurement** — USDC valued at market (≈ $1.00 peg)
-- **Changes through net income** — Gains/losses in income statement
-- **Required disclosures** — Holdings, cost basis, fair value per asset
-- **Aging schedules** — Accounts receivable categorized by age
-- **Cost basis tracking** — Specific identification method
-
-See [`references/fasb-guide.md`](references/fasb-guide.md) for detailed guidance.
-
-## 🔗 Supported Chains (Testnet)
-
-| Chain | USDC Address | CCTP Domain |
-|-------|-------------|-------------|
-| Ethereum Sepolia | `0x1c7D...7238` | 0 |
-| Base Sepolia | `0x036C...CF7e` | 6 |
-| Arbitrum Sepolia | `0x75fa...46AA4d` | 3 |
+See [SKILL.md](SKILL.md#environment-variables) for full details including Docker and secret manager examples.
 
 ## 📦 Python Package Import
 
@@ -125,19 +111,15 @@ from skills.usdc_treasury.scripts import (
     bridge_usdc,
 )
 
-# One-liner balance check
 print(get_balances()["total_usdc"])
 ```
 
 ## 🌐 Inter-Agent REST API
 
-Start the server for agent-to-agent communication:
-
 ```bash
-TREASURY_API_KEY=secret python scripts/server.py --port 9090
-```
+# Start the server
+TREASURY_API_KEY=secret python scripts/server.py
 
-```bash
 # Another agent sends us an invoice
 curl -X POST http://localhost:9090/invoices \
   -H "Authorization: Bearer secret" \
@@ -150,31 +132,37 @@ curl -X POST http://localhost:9090/invoices/INV-0001/pay \
   -H "Authorization: Bearer secret"
 ```
 
-See [SKILL.md](SKILL.md#inter-agent-protocol-rest-api) for full API documentation.
+See [SKILL.md](SKILL.md#inter-agent-protocol-rest-api) for full API docs.
 
-## ⚙️ Configuration
+## 📊 FASB ASU 2023-08 Compliance
 
-| Variable | Description |
-|----------|-------------|
-| `TREASURY_PRIVATE_KEY` | EVM private key (hex) — primary |
-| `ETH_PRIVATE_KEY` | Fallback private key |
-| `TREASURY_API_KEY` | Bearer token for REST API |
-| `TREASURY_PORT` | REST API port (default: 9090) |
+- **Fair value measurement** — USDC valued at market
+- **Changes through net income** — Gains/losses in income statement
+- **Required disclosures** — Holdings, cost basis, fair value
+- **Aging schedules** — Receivables by age
+- **Cost basis tracking** — Specific identification method
 
-Key resolution: env vars → KeePassXC → macOS Keychain
+## 🔗 Supported Chains (Testnet)
+
+| Chain | USDC Address | CCTP Domain |
+|-------|-------------|-------------|
+| Ethereum Sepolia | `0x1c7D...7238` | 0 |
+| Base Sepolia | `0x036C...CF7e` | 6 |
+| Arbitrum Sepolia | `0x75fa...46AA4d` | 3 |
 
 ## 🔐 Security
 
 - **Testnet only** — mainnet chain IDs rejected at startup
-- **Private key** via env vars, KeePassXC, or macOS Keychain — never in code
+- **No secrets in code** — everything via env vars
 - **API auth** via Bearer token
 - **Transaction signing** happens locally
+- **Portable** — works on Linux, macOS, Docker, CI
 
 ## 🏆 Built For
 
 [USDC Hackathon on Moltbook](https://moltbook.com) — Demonstrating how AI agents can manage financial operations with real on-chain settlement.
 
-**Version 2.1.0** · [Changelog](CHANGELOG.md)
+**Version 2.1.0** · [Changelog](CHANGELOG.md) · [Full Docs](SKILL.md)
 
 ## License
 

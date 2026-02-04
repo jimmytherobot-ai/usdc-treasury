@@ -15,6 +15,27 @@ import os
 import json
 import subprocess
 
+
+def _load_dotenv():
+    """Load .env file from skill root if it exists. No dependencies required."""
+    env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
+    if not os.path.isfile(env_path):
+        return
+    with open(env_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip()
+            # Don't override existing env vars
+            if key and key not in os.environ:
+                os.environ[key] = value
+
+
+_load_dotenv()
+
 # ============================================================
 # Chain Configuration
 # ============================================================
@@ -71,51 +92,86 @@ for _chain_key, _chain_cfg in CHAINS.items():
 # Wallet
 # ============================================================
 
-TREASURY_WALLET = os.environ.get("TREASURY_WALLET", "0x8fcc48751905c01cB7ddCC7A0c3d491389805ba8")
+def _is_macos():
+    """Check if running on macOS."""
+    import platform
+    return platform.system() == "Darwin"
+
 
 def get_private_key():
-    """Retrieve private key. Resolution order:
-    1. TREASURY_PRIVATE_KEY or ETH_PRIVATE_KEY env var (works everywhere)
-    2. KeePassXC via get-secret.sh (if available)
-    3. macOS Keychain (if on macOS)
     """
-    # 1. Environment variables — primary method for portability
+    Retrieve private key. Resolution order:
+    1. TREASURY_PRIVATE_KEY env var         (works everywhere)
+    2. ETH_PRIVATE_KEY env var              (common convention)
+    3. Secret helper script                 (if TREASURY_SECRET_CMD is set)
+    4. macOS Keychain                       (if on macOS and configured)
+    """
+    # 1-2. Environment variables — primary method
     key = os.environ.get("TREASURY_PRIVATE_KEY") or os.environ.get("ETH_PRIVATE_KEY")
     if key:
         return key if key.startswith("0x") else f"0x{key}"
-    
-    # 2. KeePassXC (optional — only if helper script exists)
-    secret_helper = os.environ.get("TREASURY_SECRET_HELPER", 
-                                    os.path.expanduser("~/clawd/scripts/get-secret.sh"))
-    try:
-        if os.path.exists(secret_helper):
+
+    # 3. Secret helper command (e.g. KeePassXC, Vault, 1Password CLI, etc.)
+    #    Set TREASURY_SECRET_CMD to the full command that prints the key to stdout.
+    #    Example: TREASURY_SECRET_CMD="op read op://Vault/eth-key/password"
+    #    Example: TREASURY_SECRET_CMD="/path/to/get-secret.sh my-wallet-key"
+    secret_cmd = os.environ.get("TREASURY_SECRET_CMD")
+    if secret_cmd:
+        try:
             result = subprocess.run(
-                [secret_helper, "jimmy-wallet-eth"],
+                secret_cmd, shell=True,
                 capture_output=True, text=True, timeout=10
             )
             key = result.stdout.strip()
-            if key and len(key) >= 64 and not key.startswith("Error"):
+            if key and len(key) >= 64 and result.returncode == 0:
                 return key if key.startswith("0x") else f"0x{key}"
-    except Exception:
-        pass
-    
-    # 3. macOS Keychain (optional — only on macOS)
-    try:
-        result = subprocess.run(
-            ["security", "find-generic-password", "-a", "jimmy", "-s", "jimmy-wallet-eth", "-w"],
-            capture_output=True, text=True, timeout=10
-        )
-        key = result.stdout.strip()
-        if key and len(key) >= 64:
-            return key if key.startswith("0x") else f"0x{key}"
-    except Exception:
-        pass
-    
+        except Exception:
+            pass
+
+    # 4. macOS Keychain (only on macOS — skipped silently on Linux/Docker)
+    if _is_macos():
+        kc_account = os.environ.get("TREASURY_KEYCHAIN_ACCOUNT", "")
+        kc_service = os.environ.get("TREASURY_KEYCHAIN_SERVICE", "")
+        if kc_account and kc_service:
+            try:
+                result = subprocess.run(
+                    ["security", "find-generic-password",
+                     "-a", kc_account, "-s", kc_service, "-w"],
+                    capture_output=True, text=True, timeout=10
+                )
+                key = result.stdout.strip()
+                if key and len(key) >= 64:
+                    return key if key.startswith("0x") else f"0x{key}"
+            except Exception:
+                pass
+
     raise RuntimeError(
-        "No private key found. Set TREASURY_PRIVATE_KEY env var, "
-        "or configure KeePassXC/macOS Keychain. "
-        "See SKILL.md for setup instructions."
+        "No private key found. Set the TREASURY_PRIVATE_KEY environment variable.\n"
+        "Example: export TREASURY_PRIVATE_KEY=0xYourPrivateKeyHere\n"
+        "See SKILL.md for all configuration options."
     )
+
+
+def _resolve_wallet():
+    """
+    Resolve wallet address. Order:
+    1. TREASURY_WALLET env var
+    2. Derived from private key (if available)
+    Returns None if neither is available (read-only mode still works for some operations).
+    """
+    addr = os.environ.get("TREASURY_WALLET")
+    if addr:
+        return addr
+    # Try deriving from private key
+    try:
+        from web3 import Web3
+        key = get_private_key()
+        return Web3().eth.account.from_key(key).address
+    except Exception:
+        return None
+
+
+TREASURY_WALLET = _resolve_wallet()
 
 
 # ============================================================

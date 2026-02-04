@@ -2,6 +2,23 @@
 
 ## v2.1.0 — 2026-02-04
 
+### 🌍 Fully Portable (Zero macOS Dependencies)
+- **No hardcoded paths** — all references to `~/clawd/`, `jimmy`, specific wallet addresses removed
+- **Env-var-first configuration** — `TREASURY_PRIVATE_KEY` is the primary key method
+- **Auto `.env` loading** — drops `scripts/.env` at skill root, loaded automatically (no python-dotenv needed)
+- **`TREASURY_WALLET`** — env var or auto-derived from private key
+- **`TREASURY_DATA_DIR`** — override data directory location
+- **`TREASURY_RPC_*`** — per-chain RPC URL overrides
+- **`TREASURY_SECRET_CMD`** — plug in any secret manager (1Password, Vault, AWS SM, custom scripts)
+- **macOS Keychain** — only activated when `TREASURY_KEYCHAIN_*` vars are explicitly set
+- **Private key resolution:** env var → `TREASURY_SECRET_CMD` → macOS Keychain (explicit opt-in only)
+
+### 📋 First-Run Experience
+- **`scripts/setup.py`** — validates Python, dependencies, RPC connectivity, wallet config
+- Shows clear ❌/✅ diagnostics with actionable fix instructions
+- Derives wallet address from key, checks balances, suggests faucet links
+- **`requirements.txt`** — `pip install -r requirements.txt` is all you need
+
 ### 🌐 Inter-Agent REST API
 - **`scripts/server.py`** — lightweight HTTP server for agent-to-agent treasury operations
   - `GET /health` — health check
@@ -18,11 +35,6 @@
 - Proper `__init__.py` with all public API exports
 - Importable as `from skills.usdc_treasury.scripts import get_balances, create_invoice, ...`
 - Symlink `usdc_treasury` → `usdc-treasury` for Python-friendly imports
-
-### 🔑 Environment Variable Configuration
-- `TREASURY_PRIVATE_KEY` / `ETH_PRIVATE_KEY` env vars as first-priority key source
-- Enables Docker/Linux/CI deployment without KeePassXC or macOS Keychain
-- Key resolution order: env vars → KeePassXC → macOS Keychain
 
 ## v2.0.0 — 2026-02-04
 
