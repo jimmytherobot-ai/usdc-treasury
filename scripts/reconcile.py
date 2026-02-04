@@ -251,7 +251,7 @@ def reconcile(chain_key=None, wallet=None, from_block=None):
                 address=Web3.to_checksum_address(cfg["usdc_address"]),
                 abi=ERC20_ABI
             )
-            onchain_balance = usdc.functions.balanceOf(wallet).call()
+            onchain_balance = usdc.functions.balanceOf(Web3.to_checksum_address(wallet)).call()
             decimals = usdc.functions.decimals().call()
             chain_report["balance_check"] = {
                 "onchain_usdc": str(Decimal(onchain_balance) / Decimal(10 ** decimals)),

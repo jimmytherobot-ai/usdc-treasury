@@ -37,12 +37,15 @@ def get_balance(chain_key, wallet=None):
     wallet = wallet or TREASURY_WALLET
     w3, cfg = get_web3(chain_key)
     
-    eth_balance = w3.eth.get_balance(wallet)
+    # Ensure valid checksum address for web3 calls
+    wallet_cs = Web3.to_checksum_address(wallet)
+    
+    eth_balance = w3.eth.get_balance(wallet_cs)
     usdc = w3.eth.contract(
         address=Web3.to_checksum_address(cfg["usdc_address"]),
         abi=ERC20_ABI
     )
-    usdc_balance = usdc.functions.balanceOf(wallet).call()
+    usdc_balance = usdc.functions.balanceOf(wallet_cs).call()
     decimals = usdc.functions.decimals().call()
     
     return {

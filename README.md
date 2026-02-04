@@ -42,16 +42,19 @@ This skill turns any OpenClaw-compatible AI agent into a treasury manager that c
 usdc-treasury/
 ├── SKILL.md              — OpenClaw skill definition
 ├── README.md             — This file
+├── CHANGELOG.md          — Version history
 ├── scripts/
 │   ├── config.py         — Chain configs, ABIs, wallet access
-│   ├── treasury.py       — Balance tracking, transfers, budgets
-│   ├── invoices.py       — Invoice CRUD, on-chain payment
-│   ├── reconcile.py      — Reconciliation engine
-│   ├── reports.py        — FASB-compliant reporting
-│   └── cctp.py           — Cross-chain USDC bridging
+│   ├── db.py             — SQLite database layer (v2)
+│   ├── treasury.py       — Balance tracking, transfers, budgets, wallet mgmt
+│   ├── invoices.py       — Invoice CRUD, on-chain payment, receivables
+│   ├── reconcile.py      — Reconciliation engine with high-water marks
+│   ├── reports.py        — FASB-compliant reporting, CSV export
+│   └── cctp.py           — Cross-chain USDC bridging with resume
 ├── references/
 │   └── fasb-guide.md     — FASB ASU 2023-08 reference
-└── data/                 — Runtime data (invoices, txs, budgets)
+└── data/
+    └── treasury.db       — SQLite database (all data)
 ```
 
 ## 🚀 Quick Start

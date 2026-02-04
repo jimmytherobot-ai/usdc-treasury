@@ -164,13 +164,16 @@ def generate_balance_sheet(as_of=None, wallet=None):
         })
         total_digital += usdc
     
-    # Accounts receivable (pending/partial invoices)
+    # Accounts receivable (receivable invoices — they owe us)
     ar_items = []
     total_ar = Decimal("0")
+    # Accounts payable (payable invoices — we owe them)
+    ap_items = []
+    total_ap = Decimal("0")
     for inv in invoices:
         if inv["status"] in ("pending", "partial"):
             remaining = Decimal(inv["remaining_usdc"])
-            ar_items.append({
+            item = {
                 "invoice_number": inv["invoice_number"],
                 "counterparty": inv["counterparty"]["name"],
                 "total": inv["total_usdc"],
@@ -179,8 +182,13 @@ def generate_balance_sheet(as_of=None, wallet=None):
                 "due_date": inv["due_date"],
                 "aging_category": _aging_category(inv["due_date"]),
                 "type": inv.get("invoice_type", "payable"),
-            })
-            total_ar += remaining
+            }
+            if inv.get("invoice_type") == "receivable":
+                ar_items.append(item)
+                total_ar += remaining
+            else:
+                ap_items.append(item)
+                total_ap += remaining
     
     balance_sheet = {
         "as_of": as_of,
@@ -201,9 +209,18 @@ def generate_balance_sheet(as_of=None, wallet=None):
             "total_assets_usd": str(total_digital + total_ar),
         },
         
+        "liabilities": {
+            "accounts_payable": {
+                "items": ap_items,
+                "total_usd": str(total_ap),
+                "measurement": "Amortized cost",
+            },
+            "total_liabilities_usd": str(total_ap),
+        },
+        
         "equity": {
-            "retained_earnings": str(total_digital + total_ar),
-            "note": "Simplified — no liabilities tracked in current version",
+            "retained_earnings": str(total_digital + total_ar - total_ap),
+            "note": "Assets minus liabilities",
         },
         
         "disclosures": {

@@ -500,12 +500,22 @@ def list_invoices(status=None, counterparty=None, chain=None, invoice_type=None,
         return [_invoice_row_to_dict(r) for r in rows]
 
 
+_INVOICE_COLUMNS = {
+    "status", "counterparty_name", "counterparty_address", "from_wallet",
+    "chain", "chain_name", "line_items_json", "total_usdc", "paid_usdc",
+    "remaining_usdc", "payments_json", "category", "memo", "invoice_type",
+    "created_at", "due_date", "updated_at",
+}
+
+
 def update_invoice(invoice_number, updates):
     """Update invoice fields by invoice_number. updates is a dict of column: value."""
     with get_db() as conn:
         set_clauses = []
         params = []
         for col, val in updates.items():
+            if col not in _INVOICE_COLUMNS:
+                raise ValueError(f"Invalid invoice column: {col}")
             set_clauses.append(f"{col} = ?")
             params.append(val)
         params.append(invoice_number)
@@ -636,12 +646,20 @@ def get_bridge(burn_tx_hash):
         return dict(row) if row else None
 
 
+_BRIDGE_COLUMNS = {
+    "source_chain", "dest_chain", "amount_usdc", "recipient",
+    "message_hash", "message_bytes", "attestation", "mint_tx_hash", "status",
+}
+
+
 def update_bridge(burn_tx_hash, updates):
     """Update bridge fields."""
     with get_db() as conn:
         set_clauses = []
         params = []
         for col, val in updates.items():
+            if col not in _BRIDGE_COLUMNS:
+                raise ValueError(f"Invalid bridge column: {col}")
             set_clauses.append(f"{col} = ?")
             params.append(val)
         updates_str = ", ".join(set_clauses)
