@@ -5,6 +5,7 @@ Testnet contract addresses, chain configs, ABIs
 
 import os
 import json
+import fcntl
 import subprocess
 
 # ============================================================
@@ -46,6 +47,15 @@ CHAINS = {
 
 # Circle CCTP attestation API (testnet)
 CCTP_ATTESTATION_API = "https://iris-api-sandbox.circle.com/v2/attestations"
+
+# Safety: reject mainnet chain IDs to prevent accidental mainnet transactions
+MAINNET_CHAIN_IDS = {1, 8453, 42161, 10, 137, 43114, 56}  # ETH, Base, Arb, OP, Polygon, Avalanche, BSC
+for _chain_key, _chain_cfg in CHAINS.items():
+    if _chain_cfg["chain_id"] in MAINNET_CHAIN_IDS:
+        raise RuntimeError(
+            f"SAFETY: Mainnet chain ID {_chain_cfg['chain_id']} detected in CHAINS['{_chain_key}']. "
+            f"This tool is testnet-only. Remove mainnet chains from config."
+        )
 
 # ============================================================
 # Wallet
@@ -160,11 +170,22 @@ def load_json(path):
     ensure_data_dir()
     try:
         with open(path) as f:
-            return json.load(f)
+            fcntl.flock(f, fcntl.LOCK_SH)
+            try:
+                return json.load(f)
+            finally:
+                fcntl.flock(f, fcntl.LOCK_UN)
     except (json.JSONDecodeError, FileNotFoundError):
         return []
 
 def save_json(path, data):
     ensure_data_dir()
-    with open(path, "w") as f:
-        json.dump(data, f, indent=2, default=str)
+    # Use "a+" to create file if it doesn't exist, then seek+truncate for write
+    with open(path, "a+") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        try:
+            f.seek(0)
+            f.truncate()
+            json.dump(data, f, indent=2, default=str)
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)

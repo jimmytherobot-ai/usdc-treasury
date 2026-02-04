@@ -41,7 +41,21 @@ def create_invoice(
     line_items: list of {"description": str, "quantity": float, "unit_price": float}
     Returns the created invoice.
     """
+    # Validate counterparty address
+    if not Web3.is_address(counterparty_address):
+        raise ValueError(f"Invalid Ethereum address: {counterparty_address}")
+    
     invoices = load_json(INVOICES_FILE)
+    
+    # Validate line items
+    if not line_items:
+        raise ValueError("Invoice must have at least one line item")
+    
+    for item in line_items:
+        if Decimal(str(item.get("quantity", 0))) <= 0:
+            raise ValueError(f"Line item quantity must be positive: {item.get('description', 'unknown')}")
+        if Decimal(str(item.get("unit_price", 0))) < 0:
+            raise ValueError(f"Line item unit_price cannot be negative: {item.get('description', 'unknown')}")
     
     # Generate invoice number
     inv_num = len(invoices) + 1
@@ -52,6 +66,8 @@ def create_invoice(
         item["amount"] = str(Decimal(str(item["quantity"])) * Decimal(str(item["unit_price"])))
     
     total = sum(Decimal(item["amount"]) for item in line_items)
+    if total <= 0:
+        raise ValueError(f"Invoice total must be positive, got {total}")
     now = datetime.now(timezone.utc)
     
     invoice = {
@@ -390,4 +406,11 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (ValueError, json.JSONDecodeError) as e:
+        print(json.dumps({"error": str(e)}), file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(json.dumps({"error": f"Unexpected error: {e}"}), file=sys.stderr)
+        sys.exit(1)

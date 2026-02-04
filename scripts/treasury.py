@@ -97,6 +97,10 @@ def transfer_usdc(chain_key, to_address, amount_usdc, memo=None, category=None):
     private_key = get_private_key()
     account = w3.eth.account.from_key(private_key)
     
+    # Validate recipient address
+    if not Web3.is_address(to_address):
+        raise ValueError(f"Invalid Ethereum address: {to_address}")
+    
     usdc = w3.eth.contract(
         address=Web3.to_checksum_address(cfg["usdc_address"]),
         abi=ERC20_ABI
@@ -355,4 +359,11 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except ValueError as e:
+        print(json.dumps({"error": str(e)}), file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(json.dumps({"error": f"Unexpected error: {e}"}), file=sys.stderr)
+        sys.exit(1)

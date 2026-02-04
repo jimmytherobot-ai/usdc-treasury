@@ -266,7 +266,9 @@ def generate_counterparty_report(counterparty_name=None):
         
         counterparties[cp]["total_invoiced"] += Decimal(inv["total_usdc"])
         counterparties[cp]["total_paid"] += Decimal(inv["paid_usdc"])
-        counterparties[cp]["total_outstanding"] += Decimal(inv["remaining_usdc"])
+        # Only count non-cancelled invoices as outstanding
+        if inv["status"] not in ("cancelled",):
+            counterparties[cp]["total_outstanding"] += Decimal(inv["remaining_usdc"])
         counterparties[cp]["invoice_count"] += 1
         counterparties[cp]["invoices"].append({
             "number": inv["invoice_number"],
@@ -410,4 +412,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        print(json.dumps({"error": str(e)}), file=sys.stderr)
+        sys.exit(1)
